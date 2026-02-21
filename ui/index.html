@@ -2,53 +2,144 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>tgate – live traffic</title>
-
-  <!-- 6 kB CSS framework, no build step -->
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/@picocss/pico@1.*/css/pico.min.css" />
-
-  <!-- Optional local tweaks -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tgate Console</title>
   <link rel="stylesheet" href="styles.css" />
-
-  <!-- Alpine.js (9 kB) for reactivity, also no build step -->
-  <script defer
-          src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
-<body x-data="ui()" class="container">
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">tgate</span>
+        <span class="dot"></span>
+        <span class="pill online" id="status-pill">online</span>
+      </div>
+      <nav class="top-nav">
+        <button class="nav-btn active" data-view="inspect-view">Inspect</button>
+        <button class="nav-btn" data-view="status-view">Status</button>
+      </nav>
+      <div class="top-meta">
+        <span id="last-updated">updated just now</span>
+      </div>
+    </header>
 
-  <hgroup style="margin-top:2rem">
-    <h1>tgate</h1>
-    <h2 x-text="subtitle"></h2>
-  </hgroup>
+    <main class="workspace">
+      <section id="inspect-view" class="view active">
+        <section class="kpi-row">
+          <article class="kpi-card">
+            <h3>Total Requests</h3>
+            <p id="kpi-total">0</p>
+          </article>
+          <article class="kpi-card">
+            <h3>Error Rate</h3>
+            <p id="kpi-errors">0%</p>
+          </article>
+          <article class="kpi-card">
+            <h3>P50 Latency</h3>
+            <p id="kpi-p50">0.0 ms</p>
+          </article>
+          <article class="kpi-card">
+            <h3>P90 Latency</h3>
+            <p id="kpi-p90">0.0 ms</p>
+          </article>
+        </section>
 
-  <!-- live table --------------------------------------------------------- -->
-  <table role="grid">
-    <thead>
-      <tr>
-        <th>When</th><th>M</th><th>Path</th>
-        <th>Status</th><th>ms</th>
-      </tr>
-    </thead>
-    <tbody>
-      <template x-for="r in requests" :key="r.id">
-        <tr :class="r.status_code>=400 ? 'error' : ''"
-            @click="select(r)">
-          <td x-text="r.timestamp"></td>
-          <td x-text="r.method"></td>
-          <td x-text="r.url"></td>
-          <td x-text="r.status_code"></td>
-          <td x-text="(r.duration/1e6).toFixed(1)"></td>
-        </tr>
-      </template>
-    </tbody>
-  </table>
+        <section class="inspect-grid">
+          <aside class="panel request-panel">
+            <header class="panel-header">
+              <h2>All Requests</h2>
+              <button id="clear-requests" class="btn-secondary">Clear</button>
+            </header>
+            <div class="filter-row">
+              <input id="request-filter" type="text" placeholder="Filter by method, path, status, IP..." />
+            </div>
+            <div id="request-list" class="request-list"></div>
+          </aside>
 
-  <!-- drill-down --------------------------------------------------------- -->
-  <article x-show="selected" style="margin-top:2rem">
-    <h3 x-text="selected.url"></h3>
-    <pre x-text="JSON.stringify(selected, null, 2)"></pre>
-  </article>
+          <section class="panel detail-panel">
+            <header class="panel-header">
+              <h2 id="selected-title">Select a request</h2>
+              <span id="selected-meta" class="muted"></span>
+            </header>
+
+            <div id="empty-detail" class="empty-state">
+              Traffic details appear here once requests arrive.
+            </div>
+
+            <div id="detail-content" class="detail-content hidden">
+              <article class="detail-card">
+                <header>
+                  <h3>Request</h3>
+                  <div class="tab-row" id="request-tabs">
+                    <button data-tab="summary" class="tab-btn active">Summary</button>
+                    <button data-tab="headers" class="tab-btn">Headers</button>
+                    <button data-tab="raw" class="tab-btn">Raw</button>
+                    <button data-tab="body" class="tab-btn">Body</button>
+                  </div>
+                </header>
+                <div id="request-tab-content" class="tab-content"></div>
+              </article>
+
+              <article class="detail-card">
+                <header>
+                  <h3>Response</h3>
+                  <div class="tab-row" id="response-tabs">
+                    <button data-tab="summary" class="tab-btn active">Summary</button>
+                    <button data-tab="headers" class="tab-btn">Headers</button>
+                    <button data-tab="raw" class="tab-btn">Raw</button>
+                    <button data-tab="body" class="tab-btn">Body</button>
+                  </div>
+                </header>
+                <div id="response-tab-content" class="tab-content"></div>
+              </article>
+            </div>
+          </section>
+        </section>
+      </section>
+
+      <section id="status-view" class="view">
+        <section class="status-grid">
+          <article class="panel">
+            <header class="panel-header">
+              <h2>Runtime</h2>
+            </header>
+            <table class="kv-table">
+              <tbody id="runtime-table"></tbody>
+            </table>
+          </article>
+
+          <article class="panel">
+            <header class="panel-header">
+              <h2>Traffic Metrics</h2>
+            </header>
+            <table class="metrics-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody id="metrics-table"></tbody>
+            </table>
+          </article>
+
+          <article class="panel">
+            <header class="panel-header">
+              <h2>Methods</h2>
+            </header>
+            <div id="method-breakdown" class="breakdown-list"></div>
+          </article>
+
+          <article class="panel">
+            <header class="panel-header">
+              <h2>Status Codes</h2>
+            </header>
+            <div id="status-breakdown" class="breakdown-list"></div>
+          </article>
+        </section>
+      </section>
+    </main>
+  </div>
 
   <script src="app.js"></script>
 </body>

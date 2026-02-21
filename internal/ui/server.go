@@ -16,6 +16,7 @@ import (
 type LogProvider interface {
 	GetRequestLogs() []model.RequestLog
 	GetStats() (ttl, opn int, rt1, rt5, p50, p90 float64)
+	ClearRequestLogs()
 }
 
 // Server serves the web dashboard UI
@@ -42,7 +43,7 @@ func NewServer(logProvider LogProvider, uiFS fs.FS) *Server {
 // ServeHTTP implements the http.Handler interface
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// API endpoints
-	if strings.HasPrefix(r.URL.Path, "/api/") {
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/ui/api/") {
 		s.handleAPI(w, r)
 		return
 	}
@@ -63,8 +64,28 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch r.URL.Path {
+	apiPath := r.URL.Path
+	if strings.HasPrefix(apiPath, "/ui/api/") {
+		apiPath = strings.TrimPrefix(apiPath, "/ui")
+	}
+
+	switch apiPath {
 	case "/api/requests":
+		if r.Method == http.MethodDelete {
+			if s.logProvider == nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]string{"error": "log provider not available"})
+				return
+			}
+			s.logProvider.ClearRequestLogs()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			return
+		}
 		if s.logProvider == nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			json.NewEncoder(w).Encode(map[string]string{"error": "log provider not available"})
@@ -73,6 +94,11 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		requests := s.logProvider.GetRequestLogs()
 		json.NewEncoder(w).Encode(requests)
 	case "/api/stats":
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			return
+		}
 		if s.logProvider == nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			json.NewEncoder(w).Encode(map[string]string{"error": "stats provider not available"})

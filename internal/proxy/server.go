@@ -2,6 +2,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"go.uber.org/zap"
@@ -25,10 +27,14 @@ import (
 // LoggingResponseWriter wraps http.ResponseWriter to capture response information
 type LoggingResponseWriter struct {
 	http.ResponseWriter
-	statusCode int
-	size       int64
-	headers    map[string]string
+	statusCode    int
+	size          int64
+	headers       map[string]string
+	bodyPreview   []byte
+	bodyTruncated bool
 }
+
+const maxResponseBodyPreviewBytes = 256 * 1024
 
 // WriteHeader captures the status code
 func (lrw *LoggingResponseWriter) WriteHeader(code int) {
@@ -41,6 +47,19 @@ func (lrw *LoggingResponseWriter) Write(b []byte) (int, error) {
 	if lrw.statusCode == 0 {
 		lrw.statusCode = 200
 	}
+
+	remaining := maxResponseBodyPreviewBytes - len(lrw.bodyPreview)
+	if remaining > 0 {
+		if len(b) > remaining {
+			lrw.bodyPreview = append(lrw.bodyPreview, b[:remaining]...)
+			lrw.bodyTruncated = true
+		} else {
+			lrw.bodyPreview = append(lrw.bodyPreview, b...)
+		}
+	} else if len(b) > 0 {
+		lrw.bodyTruncated = true
+	}
+
 	size, err := lrw.ResponseWriter.Write(b)
 	lrw.size += int64(size)
 	return size, err
@@ -183,9 +202,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Create logging response writer
 	lrw := &LoggingResponseWriter{
 		ResponseWriter: w,
-		statusCode:     0,
-		size:           0,
-		headers:        make(map[string]string),
+		statusCode:    0,
+		size:          0,
+		headers:       make(map[string]string),
+		bodyPreview:   make([]byte, 0),
+		bodyTruncated: false,
 	}
 
 	// Read request body for logging (if not too large)
@@ -242,9 +263,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Size:        r.ContentLength,
 		StatusCode:  lrw.statusCode, // Convenience field for UI
 		Response: model.ResponseLog{
-			StatusCode: lrw.statusCode,
-			Headers:    lrw.headers,
-			Size:       lrw.size,
+			StatusCode:    lrw.statusCode,
+			Headers:       lrw.headers,
+			Body:          formatResponseBodyPreview(lrw.headers, lrw.bodyPreview),
+			BodyTruncated: lrw.bodyTruncated,
+			Size:          lrw.size,
 		},
 		Duration: duration,
 	}
@@ -259,6 +282,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.Int64("response_size", lrw.size),
 	)
 
+}
+
+func formatResponseBodyPreview(headers map[string]string, preview []byte) string {
+	if len(preview) == 0 {
+		return ""
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(headers["Content-Type"]))
+	textLike := strings.HasPrefix(contentType, "text/") ||
+		strings.HasPrefix(contentType, "application/json") ||
+		strings.HasPrefix(contentType, "application/xml") ||
+		strings.HasPrefix(contentType, "application/javascript") ||
+		strings.HasPrefix(contentType, "application/x-www-form-urlencoded") ||
+		strings.Contains(contentType, "+json") ||
+		strings.Contains(contentType, "+xml")
+
+	if textLike || utf8.Valid(preview) {
+		return string(bytes.ToValidUTF8(preview, []byte("\uFFFD")))
+	}
+
+	return "[binary response body omitted]"
 }
 
 func (s *Server) enforceFunnelAllowlist(w http.ResponseWriter, r *http.Request) bool {
@@ -371,6 +415,14 @@ func (s *Server) GetRequestLogs() []model.RequestLog {
 // GetStats returns current statistics (implements model.StatsProvider)
 func (s *Server) GetStats() (ttl, opn int, rt1, rt5, p50, p90 float64) {
 	return s.stats.GetStats()
+}
+
+// ClearRequestLogs clears captured request history and resets runtime stats.
+func (s *Server) ClearRequestLogs() {
+	s.logMutex.Lock()
+	s.requestLog = s.requestLog[:0]
+	s.logMutex.Unlock()
+	s.stats.Reset()
 }
 
 // SendTUIMessage sends a message to the TUI if available (implements model.TUIMessageSender)

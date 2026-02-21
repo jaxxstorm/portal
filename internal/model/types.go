@@ -24,9 +24,11 @@ type RequestLog struct {
 
 // ResponseLog represents the response part of a logged request
 type ResponseLog struct {
-	StatusCode int               `json:"status_code"`
-	Headers    map[string]string `json:"headers"`
-	Size       int64             `json:"size"`
+	StatusCode    int               `json:"status_code"`
+	Headers       map[string]string `json:"headers"`
+	Body          string            `json:"body,omitempty"`
+	BodyTruncated bool              `json:"body_truncated,omitempty"`
+	Size          int64             `json:"size"`
 }
 
 // Config holds the main application configuration
