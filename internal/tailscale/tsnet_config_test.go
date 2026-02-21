@@ -221,42 +221,31 @@ func TestNormalizeTSNetListenMode(t *testing.T) {
 	}
 }
 
-func TestEffectiveTSNetListenMode(t *testing.T) {
+// validateTSNetListenConfig rejects service+funnel before this helper is used.
+// This test only verifies post-validation behavior for configured modes.
+func TestEffectiveTSNetListenModeReturnsConfiguredMode(t *testing.T) {
 	tests := []struct {
-		name          string
-		configured    string
-		funnelEnabled bool
-		wantMode      string
-		wantReason    string
+		name       string
+		configured string
+		wantMode   string
 	}{
 		{
-			name:          "service mode is unchanged",
-			configured:    TSNetListenModeService,
-			funnelEnabled: true,
-			wantMode:      TSNetListenModeService,
-			wantReason:    "",
+			name:       "service stays service",
+			configured: TSNetListenModeService,
+			wantMode:   TSNetListenModeService,
 		},
 		{
-			name:          "service remains service in tailnet mode",
-			configured:    TSNetListenModeService,
-			funnelEnabled: false,
-			wantMode:      TSNetListenModeService,
-			wantReason:    "",
-		},
-		{
-			name:          "listener stays listener",
-			configured:    TSNetListenModeListener,
-			funnelEnabled: true,
-			wantMode:      TSNetListenModeListener,
-			wantReason:    "",
+			name:       "listener stays listener",
+			configured: TSNetListenModeListener,
+			wantMode:   TSNetListenModeListener,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mode, reason := effectiveTSNetListenMode(tt.configured, tt.funnelEnabled)
-			if mode != tt.wantMode || reason != tt.wantReason {
-				t.Fatalf("unexpected effective mode result: got mode=%q reason=%q want mode=%q reason=%q", mode, reason, tt.wantMode, tt.wantReason)
+			mode := effectiveTSNetListenMode(tt.configured)
+			if mode != tt.wantMode {
+				t.Fatalf("unexpected effective mode result: got mode=%q want mode=%q", mode, tt.wantMode)
 			}
 		})
 	}

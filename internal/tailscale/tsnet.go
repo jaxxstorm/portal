@@ -161,7 +161,7 @@ func (ts *TSNetServer) Start(ctx context.Context) (string, error) {
 // Serve starts serving HTTP on the tsnet server
 func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 	configuredMode := normalizeTSNetListenMode(ts.config.ListenMode)
-	effectiveMode, fallbackReason := effectiveTSNetListenMode(configuredMode, ts.config.EnableFunnel)
+	effectiveMode := effectiveTSNetListenMode(configuredMode)
 	if err := validateTSNetListenConfig(ts.config, configuredMode); err != nil {
 		ts.logger.Error("Invalid TSNet listen configuration",
 			logging.Component("tsnet_server"),
@@ -172,17 +172,6 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 			logging.Error(err),
 		)
 		return err
-	}
-
-	if fallbackReason != "" {
-		ts.logger.Warn("TSNet service mode is incompatible with Funnel; falling back to listener mode",
-			logging.Component("tsnet_server"),
-			logging.TailscaleMode("tsnet"),
-			logging.Phase("listener_setup"),
-			zap.String("configured_listen_mode", configuredMode),
-			zap.String("effective_listen_mode", effectiveMode),
-			zap.String("fallback_reason", fallbackReason),
-		)
 	}
 
 	port, useTLS := ts.serveSettings()
@@ -447,9 +436,8 @@ func normalizeTSNetListenMode(listenMode string) string {
 	return mode
 }
 
-func effectiveTSNetListenMode(configuredMode string, funnelEnabled bool) (string, string) {
-	_ = funnelEnabled
-	return configuredMode, ""
+func effectiveTSNetListenMode(configuredMode string) string {
+	return configuredMode
 }
 
 func formatListenServiceError(serviceName string, err error) error {
