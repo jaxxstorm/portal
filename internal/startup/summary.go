@@ -1,0 +1,135 @@
+package startup
+
+import (
+	"strings"
+
+	"go.uber.org/zap"
+
+	"github.com/jaxxstorm/tgate/internal/config"
+	"github.com/jaxxstorm/tgate/internal/logging"
+)
+
+const (
+	ReadinessReady = "ready"
+
+	ModeLocalDaemon = "local_daemon"
+	ModeTSNet       = "tsnet"
+
+	ExposureTailnet = "tailnet"
+	ExposureFunnel  = "funnel"
+
+	WebUIStatusEnabled     = "enabled"
+	WebUIStatusDisabled    = "disabled"
+	WebUIStatusUnavailable = "unavailable"
+
+	WebUIReasonDisabledByConfig  = "disabled_by_configuration"
+	WebUIReasonTSNetNotSupported = "tsnet_ui_not_exposed"
+	WebUIReasonSetupUnavailable  = "ui_setup_unavailable"
+)
+
+type Capabilities struct {
+	Funnel      bool
+	Mock        bool
+	UI          bool
+	TUI         bool
+	JSONLogging bool
+	HTTPS       bool
+}
+
+type Summary struct {
+	Readiness   string
+	Mode        string
+	Exposure    string
+	ServiceURL  string
+	LocalURL    string
+	WebUIStatus string
+	WebUIURL    string
+	WebUIReason string
+	Capabilities
+}
+
+func BuildReadySummary(cfg *config.Config, useLocalDaemon bool, serviceURL, localURL, webUIURL string) Summary {
+	mode := ModeTSNet
+	if useLocalDaemon {
+		mode = ModeLocalDaemon
+	}
+
+	exposure := ExposureTailnet
+	if cfg.Funnel {
+		exposure = ExposureFunnel
+	}
+
+	return Summary{
+		Readiness:   ReadinessReady,
+		Mode:        mode,
+		Exposure:    exposure,
+		ServiceURL:  strings.TrimSpace(serviceURL),
+		LocalURL:    strings.TrimSpace(localURL),
+		WebUIStatus: ResolveWebUIStatus(cfg.NoUI, webUIURL),
+		WebUIURL:    strings.TrimSpace(webUIURL),
+		WebUIReason: ResolveWebUIReason(cfg.NoUI, useLocalDaemon, webUIURL),
+		Capabilities: Capabilities{
+			Funnel:      cfg.Funnel,
+			Mock:        cfg.Mock,
+			UI:          !cfg.NoUI,
+			TUI:         !cfg.NoTUI,
+			JSONLogging: cfg.JSON,
+			HTTPS:       cfg.UseHTTPS,
+		},
+	}
+}
+
+func ResolveWebUIStatus(uiDisabled bool, webUIURL string) string {
+	if uiDisabled {
+		return WebUIStatusDisabled
+	}
+	if strings.TrimSpace(webUIURL) == "" {
+		return WebUIStatusUnavailable
+	}
+	return WebUIStatusEnabled
+}
+
+func ResolveWebUIReason(uiDisabled bool, useLocalDaemon bool, webUIURL string) string {
+	if uiDisabled {
+		return WebUIReasonDisabledByConfig
+	}
+	if strings.TrimSpace(webUIURL) != "" {
+		return ""
+	}
+	if !useLocalDaemon {
+		return WebUIReasonTSNetNotSupported
+	}
+	return WebUIReasonSetupUnavailable
+}
+
+func (s Summary) IsReady() bool {
+	return s.Readiness == ReadinessReady && strings.TrimSpace(s.ServiceURL) != ""
+}
+
+func (s Summary) Fields() []zap.Field {
+	fields := []zap.Field{
+		logging.Component("startup"),
+		zap.String("readiness", s.Readiness),
+		zap.String("mode", s.Mode),
+		zap.String("exposure", s.Exposure),
+		zap.String("service_url", s.ServiceURL),
+		zap.String("web_ui_status", s.WebUIStatus),
+		zap.Bool("capability_funnel", s.Funnel),
+		zap.Bool("capability_mock", s.Mock),
+		zap.Bool("capability_ui", s.UI),
+		zap.Bool("capability_tui", s.TUI),
+		zap.Bool("capability_json_logging", s.JSONLogging),
+		zap.Bool("capability_https", s.HTTPS),
+	}
+	if s.LocalURL != "" {
+		fields = append(fields, zap.String("local_url", s.LocalURL))
+	}
+	if s.WebUIURL != "" {
+		fields = append(fields, zap.String("web_ui_url", s.WebUIURL))
+	}
+	if s.WebUIReason != "" {
+		fields = append(fields, zap.String("web_ui_reason", s.WebUIReason))
+	}
+
+	return fields
+}

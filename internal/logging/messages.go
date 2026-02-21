@@ -59,6 +59,7 @@ const (
 	MsgSetupComplete   = "Setup complete"
 	MsgCleanupStarting = "Cleanup starting"
 	MsgCleanupComplete = "Cleanup complete"
+	MsgStartupReady    = "Startup ready"
 
 	// Error messages
 	MsgSetupFailed        = "Setup failed"

@@ -17,12 +17,12 @@ import (
 )
 
 // SetupLocalTailscaleQuiet sets up Tailscale serve with minimal TUI logging
-func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, proxyServer *proxy.Server, logger *tui.TUIOnlyLogger, cfg *config.Config, uiFiles fs.FS) (cleanup func() error, uiCleanup func() error) {
+func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, proxyServer *proxy.Server, logger *tui.TUIOnlyLogger, cfg *config.Config, uiFiles fs.FS) (cleanup func() error, uiCleanup func() error, serviceInfo *tailscale.ServiceInfo) {
 	// Find an available port for our local proxy server using random allocation
 	proxyPort, err := tailscale.FindAvailableLocalPort()
 	if err != nil {
 		logger.Errorf("Port allocation failed: %v", err)
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	logger.Infof("Proxy starting port=%d", proxyPort)
@@ -37,7 +37,7 @@ func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, p
 	proxyListener, err := httputil.NewHTTPListener(httpServer.Addr, useFunnelProxyProtocol)
 	if err != nil {
 		logger.Errorf("Proxy listener setup failed port=%d error=%v", proxyPort, err)
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	go func() {
@@ -50,7 +50,7 @@ func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, p
 	if !useFunnelProxyProtocol {
 		if err := httputil.WaitForServerReady(ctx, fmt.Sprintf("localhost:%d", proxyPort), 2*time.Second); err != nil {
 			logger.Errorf("Proxy server failed to start port=%d error=%v", proxyPort, err)
-			return nil, nil
+			return nil, nil, nil
 		}
 	}
 
@@ -93,20 +93,11 @@ func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, p
 		ProxyPort:           proxyPort,
 	}
 
-	serviceInfo, err := tsClient.SetupServe(ctx, tsConfig)
+	serviceInfo, err = tsClient.SetupServe(ctx, tsConfig)
 	if err != nil {
 		logger.Errorf("Tailscale serve setup failed config=%+v error=%v", tsConfig, err)
-		return nil, nil
+		return nil, nil, nil
 	}
-
-	// Display service information
-	if serviceInfo.IsFunnel {
-		logger.Infof("Service ready url=%s access=internet", serviceInfo.URL)
-	} else {
-		logger.Infof("Service ready url=%s access=tailnet", serviceInfo.URL)
-	}
-
-	logger.Infof("Local testing url=%s", serviceInfo.LocalURL)
 
 	if cfg.Mock {
 		logger.Infof("Mock server operational port=%d", proxyPort)
@@ -132,11 +123,11 @@ func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, p
 		return httpServer.Shutdown(shutdownCtx)
 	}
 
-	return cleanup, uiCleanup
+	return cleanup, uiCleanup, serviceInfo
 }
 
 // SetupTsnetQuiet sets up TSNet server with minimal TUI logging
-func SetupTsnetQuiet(ctx context.Context, proxyServer *proxy.Server, logger *tui.TUIOnlyLogger, cfg *config.Config) func() error {
+func SetupTsnetQuiet(ctx context.Context, proxyServer *proxy.Server, logger *tui.TUIOnlyLogger, cfg *config.Config, onReady func(serviceURL string)) func() error {
 	logger.Infof("TSNet setup starting hostname=%s auth_key_provided=%t funnel_enabled=%t https_enabled=%t serve_port=%d",
 		cfg.TailscaleName, cfg.AuthKey != "", cfg.Funnel, cfg.UseHTTPS, cfg.GetServePort())
 
@@ -152,6 +143,7 @@ func SetupTsnetQuiet(ctx context.Context, proxyServer *proxy.Server, logger *tui
 	}
 
 	tsnetServer := tailscale.NewTSNetServer(tsnetConfig, tuiZapLogger)
+	tsnetServer.SetReadyCallback(onReady)
 
 	go func() {
 		if err := tsnetServer.Serve(ctx, proxyServer); err != nil {

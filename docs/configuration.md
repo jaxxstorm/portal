@@ -69,6 +69,41 @@ Mock mode:
 tgate --mock
 ```
 
+## Startup Output And Web UI Location
+
+tgate emits a definitive startup-ready log entry once traffic serving is active.
+This includes service reachability, exposure mode, and Web UI status.
+
+When `--ui-port` is omitted, tgate auto-assigns a local UI port and reports the
+effective tailnet URL in the same startup-ready output (`web_ui_url`).
+
+Non-TUI text logging example:
+
+```bash
+tgate 8080 --no-tui
+```
+
+Look for:
+- `Startup ready`
+- `service_url=...`
+- `web_ui_status=enabled|disabled|unavailable`
+- `web_ui_url=...` (when UI is available)
+
+Non-TUI JSON logging example:
+
+```bash
+tgate 8080 --no-tui --json
+```
+
+Look for a structured event with keys:
+- `message: "Startup ready"`
+- `readiness`
+- `mode`
+- `exposure`
+- `service_url`
+- `web_ui_status`
+- `web_ui_url` (when available)
+
 ## Precedence Example
 
 If you have:

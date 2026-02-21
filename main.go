@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/jaxxstorm/tgate/internal/model"
 	"github.com/jaxxstorm/tgate/internal/proxy"
 	"github.com/jaxxstorm/tgate/internal/server"
+	"github.com/jaxxstorm/tgate/internal/startup"
 	"github.com/jaxxstorm/tgate/internal/tailscale"
 	"github.com/jaxxstorm/tgate/internal/tui"
 	"github.com/jaxxstorm/tgate/internal/ui"
@@ -209,61 +209,32 @@ func runWithoutTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bo
 		logging.TUIEnabled(false),
 	)
 
-	// Display running information (legacy mode)
-	fmt.Print("\n" + strings.Repeat("─", 60) + "\n")
-	if useLocalTailscale {
-		fmt.Printf("  tgate is running with Tailscale serve!\n")
-		fmt.Printf("  Mode: Local Tailscale daemon\n")
-	} else {
-		fmt.Printf("  tgate is running with tsnet!\n")
-		fmt.Printf("  Mode: tsnet device (%s)\n", cfg.TailscaleName)
-	}
-	if cfg.Mock {
-		fmt.Printf("  Mode: Mock/Public\n")
-	} else {
-		fmt.Printf("  Target: localhost:%d\n", cfg.Port)
-	}
-	if !cfg.NoUI {
-		fmt.Printf("  Web UI: Available via Tailscale\n")
-	}
-	fmt.Print(strings.Repeat("─", 60) + "\n\n")
-
-	// Set up servers after displaying info
+	// Set up servers
 	var cleanup func() error
 	var uiCleanup func() error
 	var serviceInfo *tailscale.ServiceInfo
 
 	if useLocalTailscale {
 		cleanup, uiCleanup, serviceInfo = setupLocalTailscale(ctx, tsClient, proxyServer, logger, cfg)
+		if serviceInfo != nil {
+			logStartupSummary(logger, startup.BuildReadySummary(
+				cfg,
+				true,
+				serviceInfo.URL,
+				serviceInfo.LocalURL,
+				proxyServer.GetWebUIURL(),
+			))
+		}
 	} else {
-		cleanup = setupTsnet(ctx, proxyServer, logger, cfg)
-	}
-
-	// Display service URLs if available
-	if serviceInfo != nil {
-		fmt.Print("\n" + strings.Repeat("═", 60) + "\n")
-		fmt.Printf("  🚀 SERVICE READY\n")
-		fmt.Print(strings.Repeat("─", 60) + "\n")
-
-		if serviceInfo.IsFunnel {
-			fmt.Printf("  🌍 Internet Access:  %s\n", serviceInfo.URL)
-			fmt.Printf("     (Available to anyone on the internet)\n")
-		} else {
-			fmt.Printf("  🔒 Tailnet Access:   %s\n", serviceInfo.URL)
-			fmt.Printf("     (Available to your Tailscale network only)\n")
-		}
-
-		fmt.Printf("  🏠 Local Testing:    %s\n", serviceInfo.LocalURL)
-		fmt.Printf("     (For local development and testing)\n")
-
-		if !cfg.NoUI && len(proxyServer.GetWebUIURL()) > 0 {
-			fmt.Printf("  📊 Web UI:           %s\n", proxyServer.GetWebUIURL())
-			fmt.Printf("     (Request logs and statistics)\n")
-		}
-
-		fmt.Print(strings.Repeat("═", 60) + "\n\n")
-
-		fmt.Printf("Press Ctrl+C to stop the server\n\n")
+		cleanup = setupTsnet(ctx, proxyServer, logger, cfg, func(serviceURL string) {
+			logStartupSummary(logger, startup.BuildReadySummary(
+				cfg,
+				false,
+				serviceURL,
+				"",
+				proxyServer.GetWebUIURL(),
+			))
+		})
 	}
 
 	logger.Info(logging.MsgSetupComplete,
@@ -359,25 +330,27 @@ func runWithTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bool,
 		}
 
 		if useLocalTailscale {
-			cleanup, uiCleanup = server.SetupLocalTailscaleQuiet(ctx, tuiTsClient, proxyServer, tuiOnlyLogger, cfg, uiFiles)
+			var serviceInfo *tailscale.ServiceInfo
+			cleanup, uiCleanup, serviceInfo = server.SetupLocalTailscaleQuiet(ctx, tuiTsClient, proxyServer, tuiOnlyLogger, cfg, uiFiles)
+			if serviceInfo != nil {
+				logStartupSummaryToTUI(tuiOnlyLogger, startup.BuildReadySummary(
+					cfg,
+					true,
+					serviceInfo.URL,
+					serviceInfo.LocalURL,
+					proxyServer.GetWebUIURL(),
+				))
+			}
 		} else {
-			cleanup = server.SetupTsnetQuiet(ctx, proxyServer, tuiOnlyLogger, cfg)
-		}
-
-		tuiOnlyLogger.Infof("Server setup completed successfully total_duration=%dms tailscale_mode=%s",
-			time.Since(time.Now().Add(-2*time.Second)).Milliseconds(), // rough estimate
-			func() string {
-				if useLocalTailscale {
-					return "local_daemon"
-				} else {
-					return "tsnet"
-				}
-			}())
-
-		// Log web UI URL if available
-		if !cfg.NoUI && proxyServer.GetWebUIURL() != "" {
-			tuiOnlyLogger.Infof("Web dashboard available url=%s ui_port=%d tailscale_port=auto accessibility=tailnet_only",
-				proxyServer.GetWebUIURL(), cfg.UIPort)
+			cleanup = server.SetupTsnetQuiet(ctx, proxyServer, tuiOnlyLogger, cfg, func(serviceURL string) {
+				logStartupSummaryToTUI(tuiOnlyLogger, startup.BuildReadySummary(
+					cfg,
+					false,
+					serviceURL,
+					"",
+					proxyServer.GetWebUIURL(),
+				))
+			})
 		}
 	}()
 
@@ -540,32 +513,6 @@ func setupLocalTailscale(ctx context.Context, tsClient *tailscale.Client, proxyS
 		)
 	}
 
-	// Display service accessibility information
-	logger.Info(logging.MsgServiceReady,
-		logging.Component("tgate_service"),
-		logging.URL(svcInfo.URL),
-	)
-
-	if svcInfo.IsFunnel {
-		logger.Info(logging.MsgInternetAccess,
-			logging.Component("accessibility"),
-			logging.URL(svcInfo.URL),
-			logging.Status("public_internet"),
-		)
-	} else {
-		logger.Info(logging.MsgTailnetAccess,
-			logging.Component("accessibility"),
-			logging.URL(svcInfo.URL),
-			logging.Status("tailnet_only"),
-		)
-	}
-
-	logger.Info(logging.MsgLocalAccess,
-		logging.Component("accessibility"),
-		logging.URL(svcInfo.LocalURL),
-		logging.Status("localhost_testing"),
-	)
-
 	logger.Info(logging.MsgTailscaleServeSuccess,
 		logging.ProxyPort(proxyPort),
 		logging.TargetPort(cfg.Port),
@@ -664,7 +611,7 @@ func handleCleanupServe() {
 	fmt.Printf("You can verify with: tailscale serve status\n")
 }
 
-func setupTsnet(ctx context.Context, proxyServer *proxy.Server, logger *zap.Logger, cfg *config.Config) func() error {
+func setupTsnet(ctx context.Context, proxyServer *proxy.Server, logger *zap.Logger, cfg *config.Config, onReady func(serviceURL string)) func() error {
 	logger.Info("Setting up TSNet mode",
 		logging.Component("tsnet_setup"),
 		logging.TailscaleMode("tsnet"),
@@ -685,6 +632,7 @@ func setupTsnet(ctx context.Context, proxyServer *proxy.Server, logger *zap.Logg
 
 	// Pass the zap.Logger directly instead of creating a sugared logger
 	tsnetServer := tailscale.NewTSNetServer(tsnetConfig, logger)
+	tsnetServer.SetReadyCallback(onReady)
 
 	go func() {
 		if err := tsnetServer.Serve(ctx, proxyServer); err != nil {
@@ -714,6 +662,20 @@ func setupTsnet(ctx context.Context, proxyServer *proxy.Server, logger *zap.Logg
 		}
 		return err
 	}
+}
+
+func logStartupSummary(logger *zap.Logger, summary startup.Summary) {
+	if !summary.IsReady() {
+		return
+	}
+	logger.Info(logging.MsgStartupReady, summary.Fields()...)
+}
+
+func logStartupSummaryToTUI(logger *tui.TUIOnlyLogger, summary startup.Summary) {
+	if !summary.IsReady() {
+		return
+	}
+	logger.Info(logging.MsgStartupReady, summary.Fields()...)
 }
 
 func setupUIServer(ctx context.Context, tsClient *tailscale.Client, uiPort int, proxyServer *proxy.Server, logger *zap.Logger) (*model.UIServerInfo, error) {

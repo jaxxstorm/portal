@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 	"tailscale.com/ipn"
@@ -28,9 +29,11 @@ type TSNetConfig struct {
 
 // TSNetServer wraps a tsnet server with additional functionality
 type TSNetServer struct {
-	server *tsnet.Server
-	logger *zap.Logger
-	config TSNetConfig
+	server        *tsnet.Server
+	logger        *zap.Logger
+	config        TSNetConfig
+	readyCallback func(string)
+	readyMu       sync.RWMutex
 }
 
 type funnelClientIPContextKey struct{}
@@ -183,10 +186,11 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 	}
 
 	// Start the device
-	_, err = ts.Start(ctx)
+	serviceURL, err := ts.Start(ctx)
 	if err != nil {
 		return err
 	}
+	ts.emitReady(serviceURL)
 
 	ts.logger.Info("TSNet HTTP server ready to serve",
 		logging.Component("tsnet_server"),
@@ -211,6 +215,26 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 	}
 
 	return nil
+}
+
+// SetReadyCallback sets a callback that is invoked once tsnet serving is ready.
+func (ts *TSNetServer) SetReadyCallback(callback func(string)) {
+	ts.readyMu.Lock()
+	defer ts.readyMu.Unlock()
+	ts.readyCallback = callback
+}
+
+func (ts *TSNetServer) emitReady(serviceURL string) {
+	if strings.TrimSpace(serviceURL) == "" {
+		return
+	}
+
+	ts.readyMu.RLock()
+	callback := ts.readyCallback
+	ts.readyMu.RUnlock()
+	if callback != nil {
+		callback(serviceURL)
+	}
 }
 
 func (ts *TSNetServer) listenForServe(addr string, useTLS bool) (net.Listener, error) {

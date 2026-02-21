@@ -36,6 +36,10 @@ or in TUI mode:
 tgate 8080
 ```
 
+Healthy startup should include a definitive `Startup ready` log entry. If that
+entry is missing, startup did not complete and reachability information may be
+incomplete.
+
 ## Funnel Setup Issues
 
 For public access (`--funnel`), verify prerequisites:
