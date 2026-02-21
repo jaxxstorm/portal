@@ -466,12 +466,28 @@ func setupLocalTailscale(ctx context.Context, tsClient *tailscale.Client, proxyS
 
 			uiPort, err = tailscale.FindAvailableLocalPortFrom(tailscale.DefaultLocalUIPort)
 			if err != nil {
-				logger.Warn(logging.MsgPortAllocationFailed,
+				logger.Warn("Preferred UI port allocation failed",
 					logging.Component("ui_server"),
-					logging.Status("disabling_ui"),
+					zap.Int("preferred_ui_port", tailscale.DefaultLocalUIPort),
+					logging.Status("falling_back_to_random_port"),
 					logging.Error(err),
 				)
+
+				uiPort, err = tailscale.FindAvailableLocalPort()
+				if err != nil {
+					logger.Warn(logging.MsgPortAllocationFailed,
+						logging.Component("ui_server"),
+						logging.Status("disabling_ui"),
+						logging.Error(err),
+					)
+				} else {
+					logger.Info("Allocated fallback UI port",
+						logging.Component("ui_server"),
+						logging.UIPort(uiPort),
+					)
+				}
 			}
+
 		}
 
 		if uiPort > 0 {

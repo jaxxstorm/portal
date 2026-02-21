@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -55,8 +56,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // handleAPI handles API requests for the web dashboard
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	if origin := r.Header.Get("Origin"); origin != "" && isSameOrigin(origin, r) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+	}
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 	if r.Method == "OPTIONS" {
@@ -139,6 +143,16 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := r.URL.Path
+	if path == "/ui" {
+		http.Redirect(w, r, "/ui/", http.StatusMovedPermanently)
+		return
+	}
+	switch {
+	case path == "/ui/":
+		path = "/"
+	case strings.HasPrefix(path, "/ui/"):
+		path = strings.TrimPrefix(path, "/ui")
+	}
 	if path == "/" {
 		path = "/index.html"
 	}
@@ -158,6 +172,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 				http.NotFound(w, r)
 				return
 			}
+			path = "index.html"
 		} else {
 			http.NotFound(w, r)
 			return
@@ -186,6 +201,23 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 	// Serve the file
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file.(io.ReadSeeker))
+}
+
+func isSameOrigin(origin string, r *http.Request) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if parsed.Host == "" {
+		return false
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+
+	return strings.EqualFold(parsed.Scheme, scheme) && strings.EqualFold(parsed.Host, r.Host)
 }
 
 // ServerInfo holds information about the UI server for cleanup

@@ -74,12 +74,21 @@ body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+  background: rgba(255, 255, 255, 0.14);
+  color: #e4e7ec;
+  border: 1px solid rgba(255, 255, 255, 0.24);
 }
 
 .pill.online {
   background: rgba(6, 118, 71, 0.2);
   color: #8ce9bf;
   border: 1px solid rgba(6, 118, 71, 0.4);
+}
+
+.pill.degraded {
+  background: rgba(180, 35, 24, 0.22);
+  color: #ffd0ca;
+  border: 1px solid rgba(180, 35, 24, 0.45);
 }
 
 .top-nav {
@@ -227,10 +236,20 @@ body {
   padding: 0.55rem 0.6rem;
   margin: 0.2rem 0.3rem;
   cursor: pointer;
+  width: calc(100% - 0.6rem);
+  text-align: left;
+  background: transparent;
+  font: inherit;
+  color: inherit;
 }
 
 .request-row:hover {
   background: var(--panel-soft);
+}
+
+.request-row:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
 }
 
 .request-row.active {
@@ -431,6 +450,18 @@ body {
   font-size: 0.82rem;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 @media (max-width: 1080px) {
   .kpi-row {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
@@ -470,5 +501,23 @@ body {
       "method status"
       "path path"
       "meta meta";
+  }
+
+  .request-row .method-badge {
+    grid-area: method;
+  }
+
+  .request-row .status-pill {
+    grid-area: status;
+    justify-self: end;
+  }
+
+  .request-row .request-path {
+    grid-area: path;
+  }
+
+  .request-row .request-meta {
+    grid-area: meta;
+    text-align: left;
   }
 }

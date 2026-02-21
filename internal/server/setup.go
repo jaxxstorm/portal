@@ -60,7 +60,12 @@ func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, p
 		if uiPort == 0 {
 			uiPort, err = tailscale.FindAvailableLocalPortFrom(tailscale.DefaultLocalUIPort)
 			if err != nil {
-				logger.Warnf("UI server port allocation failed preferred_port=%d error=%v fallback=disabled", tailscale.DefaultLocalUIPort, err)
+				logger.Warnf("UI server port allocation failed preferred_port=%d error=%v fallback=random", tailscale.DefaultLocalUIPort, err)
+				uiPort, err = tailscale.FindAvailableLocalPort()
+				if err != nil {
+					logger.Warnf("UI server fallback port allocation failed error=%v fallback=disabled", err)
+					uiPort = 0
+				}
 			}
 		}
 

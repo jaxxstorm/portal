@@ -202,11 +202,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Create logging response writer
 	lrw := &LoggingResponseWriter{
 		ResponseWriter: w,
-		statusCode:    0,
-		size:          0,
-		headers:       make(map[string]string),
-		bodyPreview:   make([]byte, 0),
-		bodyTruncated: false,
+		statusCode:     0,
+		size:           0,
+		headers:        make(map[string]string),
+		bodyPreview:    make([]byte, 0),
+		bodyTruncated:  false,
 	}
 
 	// Read request body for logging (if not too large)
@@ -420,7 +420,10 @@ func (s *Server) GetStats() (ttl, opn int, rt1, rt5, p50, p90 float64) {
 // ClearRequestLogs clears captured request history and resets runtime stats.
 func (s *Server) ClearRequestLogs() {
 	s.logMutex.Lock()
-	s.requestLog = s.requestLog[:0]
+	for i := range s.requestLog {
+		s.requestLog[i] = model.RequestLog{}
+	}
+	s.requestLog = nil
 	s.logMutex.Unlock()
 	s.stats.Reset()
 }

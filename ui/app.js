@@ -44,7 +44,9 @@ function wireNavigation() {
 }
 
 function wireInspectControls() {
-  document.getElementById("request-filter").addEventListener("input", (event) => {
+  const filterInput = document.getElementById("request-filter")
+  filterInput.setAttribute("aria-label", "Filter requests")
+  filterInput.addEventListener("input", (event) => {
     state.filter = event.target.value || ""
     renderRequestList()
   })
@@ -152,13 +154,14 @@ function renderRequestList() {
     const statusCode = Number(request.status_code || request.response?.status_code || 0)
     const statusClass = statusCode >= 400 ? "status-err" : "status-ok"
     const durationMs = nsToMs(request.duration)
+    const rowLabel = `${request.method || "-"} ${request.url || "/"} status ${statusCode || "unknown"} duration ${formatMs(durationMs)} milliseconds`
     return `
-      <article class="request-row ${isActive}" data-id="${escapeHtml(request.id)}">
+      <button type="button" class="request-row ${isActive}" data-id="${escapeHtml(request.id)}" aria-pressed="${request.id === state.selectedId}" aria-label="${escapeHtml(rowLabel)}">
         <span class="method-badge">${escapeHtml(request.method || "-")}</span>
         <div class="request-path">${escapeHtml(request.url || "/")}</div>
         <div class="status-pill ${statusClass}">${escapeHtml(String(statusCode || "-"))}</div>
         <div class="request-meta">${formatMs(durationMs)} ms</div>
-      </article>
+      </button>
     `
   }).join("")
 
@@ -420,6 +423,7 @@ function setOnline(isOnline) {
   const pill = document.getElementById("status-pill")
   pill.textContent = isOnline ? "online" : "degraded"
   pill.classList.toggle("online", isOnline)
+  pill.classList.toggle("degraded", !isOnline)
 }
 
 function nsToMs(durationNs) {
