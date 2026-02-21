@@ -22,7 +22,7 @@ func TestLogStartupSummaryEmitsStructuredJSON(t *testing.T) {
 		JSON:   true,
 		Mock:   false,
 	}
-	summary := startup.BuildReadySummary(cfg, false, "https://node.ts.net", "", "")
+	summary := startup.BuildReadySummary(cfg, false, "https://node.ts.net", "", "", startup.TSNetDetails{})
 
 	var buf bytes.Buffer
 	logger := zap.New(zapcore.NewCore(
@@ -46,7 +46,7 @@ func TestLogStartupSummaryEmitsStructuredJSON(t *testing.T) {
 	if got, want := payload["message"], logging.MsgStartupReady; got != want {
 		t.Fatalf("unexpected message: got %v want %q", got, want)
 	}
-	for _, key := range []string{"readiness", "mode", "exposure", "service_url", "web_ui_status", "web_ui_reason", "capability_funnel"} {
+	for _, key := range []string{"readiness", "mode", "exposure", "service_url", "web_ui_status", "web_ui_reason", "capability_funnel", "tsnet_listen_mode_configured", "tsnet_listen_mode_effective"} {
 		if _, ok := payload[key]; !ok {
 			t.Fatalf("expected key %q in startup payload", key)
 		}

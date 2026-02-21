@@ -1,6 +1,7 @@
 package startup
 
 import (
+	"net/url"
 	"strings"
 
 	"go.uber.org/zap"
@@ -36,6 +37,13 @@ type Capabilities struct {
 	HTTPS       bool
 }
 
+type TSNetDetails struct {
+	ConfiguredListenMode string
+	EffectiveListenMode  string
+	ServiceName          string
+	ServiceFQDN          string
+}
+
 type Summary struct {
 	Readiness   string
 	Mode        string
@@ -45,10 +53,11 @@ type Summary struct {
 	WebUIStatus string
 	WebUIURL    string
 	WebUIReason string
+	TSNetDetails
 	Capabilities
 }
 
-func BuildReadySummary(cfg *config.Config, useLocalDaemon bool, serviceURL, localURL, webUIURL string) Summary {
+func BuildReadySummary(cfg *config.Config, useLocalDaemon bool, serviceURL, localURL, webUIURL string, tsnetDetails TSNetDetails) Summary {
 	mode := ModeTSNet
 	if useLocalDaemon {
 		mode = ModeLocalDaemon
@@ -59,7 +68,7 @@ func BuildReadySummary(cfg *config.Config, useLocalDaemon bool, serviceURL, loca
 		exposure = ExposureFunnel
 	}
 
-	return Summary{
+	summary := Summary{
 		Readiness:   ReadinessReady,
 		Mode:        mode,
 		Exposure:    exposure,
@@ -77,6 +86,45 @@ func BuildReadySummary(cfg *config.Config, useLocalDaemon bool, serviceURL, loca
 			HTTPS:       cfg.UseHTTPS,
 		},
 	}
+
+	if mode == ModeTSNet {
+		configured := strings.TrimSpace(tsnetDetails.ConfiguredListenMode)
+		if configured == "" {
+			configured = cfg.TSNetListenMode
+		}
+		if configured == "" {
+			configured = config.TSNetListenModeListener
+		}
+
+		effective := strings.TrimSpace(tsnetDetails.EffectiveListenMode)
+		if effective == "" {
+			effective = cfg.EffectiveTSNetListenMode()
+		}
+		if effective == "" {
+			effective = config.TSNetListenModeListener
+		}
+
+		serviceName := strings.TrimSpace(tsnetDetails.ServiceName)
+		if serviceName == "" && configured == config.TSNetListenModeService {
+			serviceName = strings.TrimSpace(cfg.TSNetServiceName)
+		}
+
+		serviceFQDN := strings.TrimSpace(tsnetDetails.ServiceFQDN)
+		if serviceFQDN == "" && effective == config.TSNetListenModeService && summary.ServiceURL != "" {
+			if parsedURL, err := url.Parse(summary.ServiceURL); err == nil {
+				serviceFQDN = strings.TrimSpace(parsedURL.Hostname())
+			}
+		}
+
+		summary.TSNetDetails = TSNetDetails{
+			ConfiguredListenMode: configured,
+			EffectiveListenMode:  effective,
+			ServiceName:          serviceName,
+			ServiceFQDN:          serviceFQDN,
+		}
+	}
+
+	return summary
 }
 
 func ResolveWebUIStatus(uiDisabled bool, webUIURL string) string {
@@ -129,6 +177,18 @@ func (s Summary) Fields() []zap.Field {
 	}
 	if s.WebUIReason != "" {
 		fields = append(fields, zap.String("web_ui_reason", s.WebUIReason))
+	}
+	if s.Mode == ModeTSNet {
+		fields = append(fields,
+			zap.String("tsnet_listen_mode_configured", s.ConfiguredListenMode),
+			zap.String("tsnet_listen_mode_effective", s.EffectiveListenMode),
+		)
+		if s.ServiceName != "" {
+			fields = append(fields, zap.String("tsnet_service_name", s.ServiceName))
+		}
+		if s.ServiceFQDN != "" {
+			fields = append(fields, zap.String("tsnet_service_fqdn", s.ServiceFQDN))
+		}
 	}
 
 	return fields

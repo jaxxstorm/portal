@@ -223,16 +223,23 @@ func runWithoutTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bo
 				serviceInfo.URL,
 				serviceInfo.LocalURL,
 				proxyServer.GetWebUIURL(),
+				startup.TSNetDetails{},
 			))
 		}
 	} else {
-		cleanup = setupTsnet(ctx, proxyServer, logger, cfg, func(serviceURL string) {
+		cleanup = setupTsnet(ctx, proxyServer, logger, cfg, func(readyInfo tailscale.TSNetReadyInfo) {
 			logStartupSummary(logger, startup.BuildReadySummary(
 				cfg,
 				false,
-				serviceURL,
+				readyInfo.ServiceURL,
 				"",
 				proxyServer.GetWebUIURL(),
+				startup.TSNetDetails{
+					ConfiguredListenMode: readyInfo.ConfiguredListenMode,
+					EffectiveListenMode:  readyInfo.EffectiveListenMode,
+					ServiceName:          readyInfo.ServiceName,
+					ServiceFQDN:          readyInfo.ServiceFQDN,
+				},
 			))
 		})
 	}
@@ -339,16 +346,23 @@ func runWithTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bool,
 					serviceInfo.URL,
 					serviceInfo.LocalURL,
 					proxyServer.GetWebUIURL(),
+					startup.TSNetDetails{},
 				))
 			}
 		} else {
-			cleanup = server.SetupTsnetQuiet(ctx, proxyServer, tuiOnlyLogger, cfg, func(serviceURL string) {
+			cleanup = server.SetupTsnetQuiet(ctx, proxyServer, tuiOnlyLogger, cfg, func(readyInfo tailscale.TSNetReadyInfo) {
 				logStartupSummaryToTUI(tuiOnlyLogger, startup.BuildReadySummary(
 					cfg,
 					false,
-					serviceURL,
+					readyInfo.ServiceURL,
 					"",
 					proxyServer.GetWebUIURL(),
+					startup.TSNetDetails{
+						ConfiguredListenMode: readyInfo.ConfiguredListenMode,
+						EffectiveListenMode:  readyInfo.EffectiveListenMode,
+						ServiceName:          readyInfo.ServiceName,
+						ServiceFQDN:          readyInfo.ServiceFQDN,
+					},
 				))
 			})
 		}
@@ -503,6 +517,8 @@ func setupLocalTailscale(ctx context.Context, tsClient *tailscale.Client, proxyS
 		UseHTTPS:            cfg.UseHTTPS,
 		ServePort:           cfg.GetServePort(),
 		ProxyPort:           proxyPort,
+		ListenMode:          cfg.TSNetListenMode,
+		ServiceName:         cfg.TSNetServiceName,
 	}
 
 	svcInfo, err := tsClient.SetupServe(ctx, tsConfig)
@@ -611,7 +627,7 @@ func handleCleanupServe() {
 	fmt.Printf("You can verify with: tailscale serve status\n")
 }
 
-func setupTsnet(ctx context.Context, proxyServer *proxy.Server, logger *zap.Logger, cfg *config.Config, onReady func(serviceURL string)) func() error {
+func setupTsnet(ctx context.Context, proxyServer *proxy.Server, logger *zap.Logger, cfg *config.Config, onReady func(readyInfo tailscale.TSNetReadyInfo)) func() error {
 	logger.Info("Setting up TSNet mode",
 		logging.Component("tsnet_setup"),
 		logging.TailscaleMode("tsnet"),
@@ -619,6 +635,9 @@ func setupTsnet(ctx context.Context, proxyServer *proxy.Server, logger *zap.Logg
 		logging.FunnelEnabled(cfg.Funnel),
 		logging.HTTPSEnabled(cfg.UseHTTPS),
 		logging.ServePort(cfg.GetServePort()),
+		zap.String("tsnet_listen_mode_configured", cfg.TSNetListenMode),
+		zap.String("tsnet_listen_mode_effective", cfg.EffectiveTSNetListenMode()),
+		zap.String("tsnet_service_name", cfg.TSNetServiceName),
 	)
 
 	// Use tsnet mode
@@ -628,6 +647,8 @@ func setupTsnet(ctx context.Context, proxyServer *proxy.Server, logger *zap.Logg
 		EnableFunnel: cfg.Funnel,
 		UseHTTPS:     cfg.UseHTTPS,
 		ServePort:    cfg.GetServePort(),
+		ListenMode:   cfg.TSNetListenMode,
+		ServiceName:  cfg.TSNetServiceName,
 	}
 
 	// Pass the zap.Logger directly instead of creating a sugared logger

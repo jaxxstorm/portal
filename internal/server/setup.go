@@ -91,6 +91,8 @@ func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, p
 		UseHTTPS:            cfg.UseHTTPS,
 		ServePort:           cfg.GetServePort(),
 		ProxyPort:           proxyPort,
+		ListenMode:          cfg.TSNetListenMode,
+		ServiceName:         cfg.TSNetServiceName,
 	}
 
 	serviceInfo, err = tsClient.SetupServe(ctx, tsConfig)
@@ -127,9 +129,9 @@ func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, p
 }
 
 // SetupTsnetQuiet sets up TSNet server with minimal TUI logging
-func SetupTsnetQuiet(ctx context.Context, proxyServer *proxy.Server, logger *tui.TUIOnlyLogger, cfg *config.Config, onReady func(serviceURL string)) func() error {
-	logger.Infof("TSNet setup starting hostname=%s auth_key_provided=%t funnel_enabled=%t https_enabled=%t serve_port=%d",
-		cfg.TailscaleName, cfg.AuthKey != "", cfg.Funnel, cfg.UseHTTPS, cfg.GetServePort())
+func SetupTsnetQuiet(ctx context.Context, proxyServer *proxy.Server, logger *tui.TUIOnlyLogger, cfg *config.Config, onReady func(readyInfo tailscale.TSNetReadyInfo)) func() error {
+	logger.Infof("TSNet setup starting hostname=%s auth_key_provided=%t funnel_enabled=%t https_enabled=%t serve_port=%d tsnet_listen_mode_configured=%s tsnet_listen_mode_effective=%s tsnet_service_name=%s",
+		cfg.TailscaleName, cfg.AuthKey != "", cfg.Funnel, cfg.UseHTTPS, cfg.GetServePort(), cfg.TSNetListenMode, cfg.EffectiveTSNetListenMode(), cfg.TSNetServiceName)
 
 	// For the quiet version, we'll need to create a zap logger from the TUIOnlyLogger
 	tuiZapLogger := tui.CreateTUIOnlyZapLogger(logger, cfg.Verbose)
@@ -140,6 +142,8 @@ func SetupTsnetQuiet(ctx context.Context, proxyServer *proxy.Server, logger *tui
 		EnableFunnel: cfg.Funnel,
 		UseHTTPS:     cfg.UseHTTPS,
 		ServePort:    cfg.GetServePort(),
+		ListenMode:   cfg.TSNetListenMode,
+		ServiceName:  cfg.TSNetServiceName,
 	}
 
 	tsnetServer := tailscale.NewTSNetServer(tsnetConfig, tuiZapLogger)

@@ -52,6 +52,18 @@ Useful command:
 tgate 8080 --funnel --verbose
 ```
 
+## Service Mode + Funnel Conflict
+
+This combination is invalid:
+
+```bash
+tgate 8080 --listen-mode service --funnel
+```
+
+Service mode and Funnel are mutually exclusive. Use one:
+- service mode for tailnet service exposure
+- listener mode with Funnel for public exposure
+
 ## Funnel Allowlist Denials (`403`)
 
 If Funnel allowlist is configured, requests are denied when:
