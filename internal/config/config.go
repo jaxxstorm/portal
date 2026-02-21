@@ -295,7 +295,7 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 	flags.Bool("use-https", false, "Use HTTPS instead of HTTP for Tailscale serve")
 	flags.Bool("no-tui", false, "Disable TUI and use simple console output")
 	flags.Bool("no-ui", false, "Disable web UI dashboard")
-	flags.Int("ui-port", 0, "Custom port for web UI (default: auto-assigned)")
+	flags.Int("ui-port", 0, "Custom port for web UI (default: 4040 or next available)")
 	flags.Bool("version", false, "Show version information")
 	flags.BoolP("mock", "m", false, "Enable mock/testing mode (no backing server required, enables funnel by default)")
 	flags.Bool("cleanup-serve", false, "Clear all Tailscale serve configurations and exit")

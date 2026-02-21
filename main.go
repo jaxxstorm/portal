@@ -459,11 +459,12 @@ func setupLocalTailscale(ctx context.Context, tsClient *tailscale.Client, proxyS
 	if !cfg.NoUI {
 		uiPort := cfg.UIPort
 		if uiPort == 0 {
-			logger.Info("Allocating random UI port",
+			logger.Info("Allocating default UI port",
 				logging.Component("ui_server"),
+				zap.Int("preferred_ui_port", tailscale.DefaultLocalUIPort),
 			)
 
-			uiPort, err = tailscale.FindAvailableLocalPort()
+			uiPort, err = tailscale.FindAvailableLocalPortFrom(tailscale.DefaultLocalUIPort)
 			if err != nil {
 				logger.Warn(logging.MsgPortAllocationFailed,
 					logging.Component("ui_server"),

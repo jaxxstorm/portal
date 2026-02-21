@@ -102,8 +102,9 @@ tgate 8080 --listen-mode service --funnel
 tgate emits a definitive startup-ready log event only after serving is active.
 This includes service reachability, exposure mode, and Web UI status.
 
-When `--ui-port` is omitted, tgate auto-assigns a local UI port and reports the
-effective tailnet URL in startup output (`web_ui_url`) when UI is available.
+When `--ui-port` is omitted, tgate prefers local port `4040` for the UI (or the
+next available nearby port) and reports the effective tailnet URL in startup
+output (`web_ui_url`) when UI is available.
 
 Non-TUI JSON logging example:
 

@@ -47,6 +47,14 @@ type Client struct {
 	logger *zap.Logger
 }
 
+const (
+	// DefaultLocalUIPort is the preferred local bind port for the web UI when
+	// no explicit --ui-port value is configured.
+	DefaultLocalUIPort = 4040
+
+	defaultLocalPortScanWindow = 200
+)
+
 // NewClient creates a new Tailscale client with structured logging
 func NewClient(logger *zap.Logger) *Client {
 	return &Client{
@@ -689,4 +697,27 @@ func FindAvailableLocalPort() (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("no available port found starting from random port %d", startPort)
+}
+
+// FindAvailableLocalPortFrom finds an available local port starting from the
+// provided port and scanning upward within a bounded window.
+func FindAvailableLocalPortFrom(startPort int) (int, error) {
+	if startPort <= 0 || startPort > 65535 {
+		return 0, fmt.Errorf("invalid start port %d", startPort)
+	}
+
+	endPort := startPort + defaultLocalPortScanWindow - 1
+	if endPort > 65535 {
+		endPort = 65535
+	}
+
+	for port := startPort; port <= endPort; port++ {
+		ln, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
+		if err == nil {
+			ln.Close()
+			return port, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no available port found in range %d-%d", startPort, endPort)
 }
