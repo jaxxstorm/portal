@@ -200,3 +200,119 @@ func TestBuildTSNetServiceURL(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeTSNetListenMode(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "default empty", in: "", want: TSNetListenModeListener},
+		{name: "trims and lowercases", in: " Service ", want: TSNetListenModeService},
+		{name: "listener", in: "listener", want: TSNetListenModeListener},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeTSNetListenMode(tt.in); got != tt.want {
+				t.Fatalf("unexpected normalized mode: got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// validateTSNetListenConfig rejects service+funnel before this helper is used.
+// This test only verifies post-validation behavior for configured modes.
+func TestEffectiveTSNetListenModeReturnsConfiguredMode(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured string
+		wantMode   string
+	}{
+		{
+			name:       "service stays service",
+			configured: TSNetListenModeService,
+			wantMode:   TSNetListenModeService,
+		},
+		{
+			name:       "listener stays listener",
+			configured: TSNetListenModeListener,
+			wantMode:   TSNetListenModeListener,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mode := effectiveTSNetListenMode(tt.configured)
+			if mode != tt.wantMode {
+				t.Fatalf("unexpected effective mode result: got mode=%q want mode=%q", mode, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestValidateTSNetListenConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  TSNetConfig
+		mode    string
+		wantErr bool
+	}{
+		{
+			name: "listener mode valid",
+			config: TSNetConfig{
+				ListenMode: TSNetListenModeListener,
+			},
+			mode:    TSNetListenModeListener,
+			wantErr: false,
+		},
+		{
+			name: "service mode valid",
+			config: TSNetConfig{
+				ListenMode:  TSNetListenModeService,
+				ServiceName: "svc:tgate",
+				ServePort:   443,
+			},
+			mode:    TSNetListenModeService,
+			wantErr: false,
+		},
+		{
+			name: "service mode invalid service name",
+			config: TSNetConfig{
+				ListenMode:  TSNetListenModeService,
+				ServiceName: "not-valid",
+				ServePort:   443,
+			},
+			mode:    TSNetListenModeService,
+			wantErr: true,
+		},
+		{
+			name: "service mode invalid with funnel",
+			config: TSNetConfig{
+				ListenMode:   TSNetListenModeService,
+				ServiceName:  "svc:tgate",
+				EnableFunnel: true,
+				ServePort:    443,
+			},
+			mode:    TSNetListenModeService,
+			wantErr: true,
+		},
+		{
+			name: "unknown mode invalid",
+			config: TSNetConfig{
+				ListenMode: "other",
+			},
+			mode:    "other",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTSNetListenConfig(tt.config, tt.mode)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("unexpected error state: err=%v wantErr=%t", err, tt.wantErr)
+			}
+		})
+	}
+}

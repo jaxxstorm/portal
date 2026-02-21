@@ -6,6 +6,7 @@ tailnet access and optional public access through Tailscale Funnel.
 ## Start Here
 
 - [Operating Modes](operating-modes.md)
+- [Mode Resolution Spec](mode-resolution-spec.md)
 - [Configuration](configuration.md)
 - [IP Whitelisting](ip-whitelisting.md)
 - [Troubleshooting](troubleshooting.md)

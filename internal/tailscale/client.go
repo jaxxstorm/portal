@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"slices"
 	"strings"
 
 	"go.uber.org/zap"
@@ -24,6 +25,8 @@ type Config struct {
 	UseHTTPS            bool
 	ServePort           int
 	ProxyPort           int
+	ListenMode          string
+	ServiceName         string
 }
 
 // ServiceInfo holds information about the configured service
@@ -123,11 +126,21 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 		sc = new(ipn.ServeConfig)
 	}
 
-	// Get DNS name
-	dnsName, err := c.GetDNSName(ctx)
+	status, err := c.lc.Status(ctx)
 	if err != nil {
-		return nil, err
+		c.logger.Error("Failed to get Tailscale status",
+			logging.Component("tailscale_serve"),
+			logging.Error(err),
+		)
+		return nil, fmt.Errorf("failed to get status: %w", err)
 	}
+	dnsName := strings.TrimSuffix(status.Self.DNSName, ".")
+	magicDNSSuffix := status.MagicDNSSuffix
+	if status.CurrentTailnet != nil && strings.TrimSpace(status.CurrentTailnet.MagicDNSSuffix) != "" {
+		magicDNSSuffix = status.CurrentTailnet.MagicDNSSuffix
+	}
+	listenMode := normalizeServeListenMode(config.ListenMode)
+	serviceName := strings.TrimSpace(config.ServiceName)
 
 	// Set up HTTP handler for the proxy target
 	h := &ipn.HTTPHandler{
@@ -166,18 +179,40 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 		zap.Bool("use_tls", useTLS),
 	)
 
-	// Check if port is already in use
-	if sc.IsTCPForwardingOnPort(srvPort, "") || sc.IsServingWeb(srvPort, "") {
+	var serviceNameTag tailcfg.ServiceName
+	if listenMode == TSNetListenModeService {
+		serviceNameTag = tailcfg.ServiceName(serviceName)
+		if err := serviceNameTag.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid service name %q: %w", serviceName, err)
+		}
+		if strings.TrimSpace(magicDNSSuffix) == "" {
+			return nil, fmt.Errorf("cannot configure service %q: missing tailnet MagicDNS suffix", serviceName)
+		}
+	}
+
+	// Check if port is already in use in node-level or service-level config.
+	portInUse := sc.IsTCPForwardingOnPort(srvPort, "") || sc.IsServingWeb(srvPort, "")
+	if serviceNameTag != "" {
+		portInUse = portInUse || sc.IsTCPForwardingOnPort(srvPort, serviceNameTag) || sc.IsServingWeb(srvPort, serviceNameTag)
+	}
+	if portInUse {
 		c.logger.Error("Port already in use for serve",
 			logging.Component("tailscale_serve"),
 			logging.ServePort(int(srvPort)),
+			zap.String("listen_mode", listenMode),
+			zap.String("service_name", serviceName),
 		)
 		return nil, fmt.Errorf("port %d is already in use by tailscale serve", srvPort)
 	}
 
 	useFunnelProxyProtocol := config.EnableFunnel && config.EnableProxyProtocol
 
-	if useFunnelProxyProtocol {
+	if listenMode == TSNetListenModeService {
+		if config.EnableFunnel {
+			return nil, fmt.Errorf("service mode is mutually exclusive with funnel")
+		}
+		sc.SetWebHandler(h, serviceName, srvPort, mountPath, useTLS, magicDNSSuffix)
+	} else if useFunnelProxyProtocol {
 		c.logger.Info("Setting up TLS-terminated TCP forwarding with PROXY protocol v2",
 			logging.Component("tailscale_serve"),
 			logging.ServePort(int(srvPort)),
@@ -244,6 +279,17 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 		)
 	}
 
+	if listenMode == TSNetListenModeService {
+		if err := c.ensureServiceAdvertised(ctx, serviceNameTag); err != nil {
+			c.logger.Error("Failed to advertise Tailscale service",
+				logging.Component("tailscale_serve"),
+				zap.String("service_name", serviceName),
+				logging.Error(err),
+			)
+			return nil, err
+		}
+	}
+
 	// Apply the serve config
 	err = c.lc.SetServeConfig(ctx, sc)
 	if err != nil {
@@ -265,7 +311,11 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 		portPart = fmt.Sprintf(":%d", srvPort)
 	}
 
-	url := fmt.Sprintf("%s://%s%s%s", scheme, dnsName, portPart, mountPath)
+	hostForURL := dnsName
+	if listenMode == TSNetListenModeService {
+		hostForURL = fmt.Sprintf("%s.%s", serviceNameTag.WithoutPrefix(), magicDNSSuffix)
+	}
+	url := fmt.Sprintf("%s://%s%s%s", scheme, hostForURL, portPart, mountPath)
 
 	if config.EnableFunnel {
 		c.logger.Info("Tailscale serve success - internet accessible",
@@ -292,6 +342,44 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 	}
 
 	return serviceInfo, nil
+}
+
+func normalizeServeListenMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return TSNetListenModeListener
+	}
+	return mode
+}
+
+func (c *Client) ensureServiceAdvertised(ctx context.Context, svcName tailcfg.ServiceName) error {
+	prefs, err := c.lc.GetPrefs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get current tailscale prefs: %w", err)
+	}
+
+	current := prefs.AdvertiseServices
+	svc := svcName.String()
+	if slices.Contains(current, svc) {
+		return nil
+	}
+
+	updated := append(append([]string{}, current...), svc)
+	_, err = c.lc.EditPrefs(ctx, &ipn.MaskedPrefs{
+		AdvertiseServicesSet: true,
+		Prefs: ipn.Prefs{
+			AdvertiseServices: updated,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to advertise service %q: %w", svc, err)
+	}
+
+	c.logger.Info("Advertised Tailscale service",
+		logging.Component("tailscale_serve"),
+		zap.String("service_name", svc),
+	)
+	return nil
 }
 
 // SetupUIServe sets up Tailscale serve for the UI dashboard

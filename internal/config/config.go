@@ -11,28 +11,43 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"tailscale.com/tailcfg"
+)
+
+const (
+	TSNetListenModeListener = "listener"
+	TSNetListenModeService  = "service"
+
+	deviceNameKey          = "device-name"
+	legacyTailscaleNameKey = "tailscale-name"
+	listenModeKey          = "listen-mode"
+	legacyListenModeKey    = "tsnet-listen-mode"
+	serviceNameKey         = "service-name"
+	legacyServiceNameKey   = "tsnet-service-name"
 )
 
 // Config holds the parsed and validated configuration
 type Config struct {
-	Port            int
-	TailscaleName   string
-	Funnel          bool
-	FunnelAllowlist []netip.Prefix
-	Verbose         bool
-	JSON            bool
-	LogFile         string
-	AuthKey         string
-	ForceTsnet      bool
-	SetPath         string
-	ServePort       int
-	UseHTTPS        bool
-	NoTUI           bool
-	NoUI            bool
-	UIPort          int
-	Version         bool
-	Mock            bool
-	CleanupServe    bool
+	Port             int
+	TailscaleName    string
+	Funnel           bool
+	FunnelAllowlist  []netip.Prefix
+	Verbose          bool
+	JSON             bool
+	LogFile          string
+	AuthKey          string
+	ForceTsnet       bool
+	SetPath          string
+	ServePort        int
+	UseHTTPS         bool
+	NoTUI            bool
+	NoUI             bool
+	UIPort           int
+	Version          bool
+	Mock             bool
+	CleanupServe     bool
+	TSNetListenMode  string
+	TSNetServiceName string
 }
 
 // Parse parses command line arguments and returns a validated configuration
@@ -71,30 +86,57 @@ func ParseArgs(args []string) (*Config, error) {
 		port = state.port
 	}
 
+	deviceName, err := resolveAliasedSetting(v, deviceNameKey, legacyTailscaleNameKey, strings.TrimSpace)
+	if err != nil {
+		return nil, err
+	}
+	listenMode, err := resolveAliasedSetting(v, listenModeKey, legacyListenModeKey, func(raw string) string {
+		return strings.ToLower(strings.TrimSpace(raw))
+	})
+	if err != nil {
+		return nil, err
+	}
+	serviceName, err := resolveAliasedSetting(v, serviceNameKey, legacyServiceNameKey, strings.TrimSpace)
+	if err != nil {
+		return nil, err
+	}
+
+	if deviceName == "" {
+		deviceName = "tgate"
+	}
+	if listenMode == "" {
+		listenMode = TSNetListenModeListener
+	}
+	if serviceName == "" {
+		serviceName = "svc:tgate"
+	}
+
 	funnelAllowlist, err := parseFunnelAllowlist(normalizeList(v.Get("funnel-allowlist")))
 	if err != nil {
 		return nil, err
 	}
 
 	cfg := &Config{
-		Port:            port,
-		TailscaleName:   v.GetString("tailscale-name"),
-		Funnel:          v.GetBool("funnel"),
-		FunnelAllowlist: funnelAllowlist,
-		Verbose:         v.GetBool("verbose"),
-		JSON:            v.GetBool("json"),
-		LogFile:         v.GetString("log-file"),
-		AuthKey:         v.GetString("auth-key"),
-		ForceTsnet:      v.GetBool("force-tsnet"),
-		SetPath:         v.GetString("set-path"),
-		ServePort:       v.GetInt("serve-port"),
-		UseHTTPS:        v.GetBool("use-https"),
-		NoTUI:           v.GetBool("no-tui"),
-		NoUI:            v.GetBool("no-ui"),
-		UIPort:          v.GetInt("ui-port"),
-		Version:         v.GetBool("version"),
-		Mock:            v.GetBool("mock"),
-		CleanupServe:    v.GetBool("cleanup-serve"),
+		Port:             port,
+		TailscaleName:    deviceName,
+		Funnel:           v.GetBool("funnel"),
+		FunnelAllowlist:  funnelAllowlist,
+		Verbose:          v.GetBool("verbose"),
+		JSON:             v.GetBool("json"),
+		LogFile:          v.GetString("log-file"),
+		AuthKey:          v.GetString("auth-key"),
+		ForceTsnet:       v.GetBool("force-tsnet"),
+		SetPath:          v.GetString("set-path"),
+		ServePort:        v.GetInt("serve-port"),
+		UseHTTPS:         v.GetBool("use-https"),
+		NoTUI:            v.GetBool("no-tui"),
+		NoUI:             v.GetBool("no-ui"),
+		UIPort:           v.GetInt("ui-port"),
+		Version:          v.GetBool("version"),
+		Mock:             v.GetBool("mock"),
+		CleanupServe:     v.GetBool("cleanup-serve"),
+		TSNetListenMode:  listenMode,
+		TSNetServiceName: serviceName,
 	}
 
 	// Handle version flag
@@ -122,6 +164,9 @@ func ParseArgs(args []string) (*Config, error) {
 
 	// Auto-configure options
 	cfg.applyAutoConfiguration()
+	if err := cfg.validateTSNetServiceConfig(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
@@ -171,6 +216,16 @@ func (c *Config) UseFunnelProxyProtocol() bool {
 	return c.HasFunnelAllowlist() && c.GetSetPath() == "/"
 }
 
+// EffectiveTSNetListenMode returns the runtime tsnet listen mode once
+// compatibility fallbacks are applied.
+func (c *Config) EffectiveTSNetListenMode() string {
+	mode := c.TSNetListenMode
+	if mode == "" {
+		mode = TSNetListenModeListener
+	}
+	return mode
+}
+
 const usageSuffix = "\nUsage: tgate <port> [flags]     (proxy mode)\n       tgate --mock [flags]     (mock/testing mode)\n       tgate --version\n       tgate --cleanup-serve"
 
 type parseState struct {
@@ -190,7 +245,6 @@ func configureViper(v *viper.Viper) error {
 	v.SetEnvPrefix("TGATE")
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 	v.AutomaticEnv()
-	v.SetDefault("tailscale-name", "tgate")
 	v.SetDefault("funnel-allowlist", []string{})
 
 	if err := v.ReadInConfig(); err != nil {
@@ -228,7 +282,8 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 	}
 
 	flags := cmd.Flags()
-	flags.StringP("tailscale-name", "n", "tgate", "Tailscale node name (only used with tsnet mode)")
+	flags.StringP(deviceNameKey, "n", "", "Tailscale device name (only used with tsnet mode) (default: tgate)")
+	flags.String(legacyTailscaleNameKey, "", "Deprecated alias for --device-name")
 	flags.BoolP("funnel", "f", false, "Enable Tailscale funnel (public internet access)")
 	flags.BoolP("verbose", "v", false, "Enable verbose logging")
 	flags.BoolP("json", "j", false, "Output logs in JSON format")
@@ -244,10 +299,21 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 	flags.Bool("version", false, "Show version information")
 	flags.BoolP("mock", "m", false, "Enable mock/testing mode (no backing server required, enables funnel by default)")
 	flags.Bool("cleanup-serve", false, "Clear all Tailscale serve configurations and exit")
+	flags.String(listenModeKey, "", "Listen mode: listener or service (default: listener)")
+	flags.String(serviceNameKey, "", "Service name used when listen-mode=service (default: svc:tgate)")
+	flags.String(legacyListenModeKey, "", "Deprecated alias for --listen-mode")
+	flags.String(legacyServiceNameKey, "", "Deprecated alias for --service-name")
+	_ = flags.MarkDeprecated(legacyTailscaleNameKey, "use --device-name instead")
+	_ = flags.MarkDeprecated(legacyListenModeKey, "use --listen-mode instead")
+	_ = flags.MarkDeprecated(legacyServiceNameKey, "use --service-name instead")
+	_ = flags.MarkHidden(legacyTailscaleNameKey)
+	_ = flags.MarkHidden(legacyListenModeKey)
+	_ = flags.MarkHidden(legacyServiceNameKey)
 
 	keys := []string{
 		"port",
-		"tailscale-name",
+		deviceNameKey,
+		legacyTailscaleNameKey,
 		"funnel",
 		"funnel-allowlist",
 		"verbose",
@@ -264,6 +330,10 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 		"version",
 		"mock",
 		"cleanup-serve",
+		listenModeKey,
+		serviceNameKey,
+		legacyListenModeKey,
+		legacyServiceNameKey,
 	}
 
 	for _, key := range keys {
@@ -350,4 +420,38 @@ func parseAllowlistEntry(entry string) (netip.Prefix, error) {
 		return netip.PrefixFrom(addr, 32), nil
 	}
 	return netip.PrefixFrom(addr, 128), nil
+}
+
+func resolveAliasedSetting(v *viper.Viper, canonicalKey, legacyKey string, normalize func(string) string) (string, error) {
+	canonical := normalize(v.GetString(canonicalKey))
+	legacy := normalize(v.GetString(legacyKey))
+
+	if canonical != "" && legacy != "" && canonical != legacy {
+		return "", fmt.Errorf("conflicting configuration: %s=%q conflicts with %s=%q", canonicalKey, canonical, legacyKey, legacy)
+	}
+	if canonical != "" {
+		return canonical, nil
+	}
+	return legacy, nil
+}
+
+func (c *Config) validateTSNetServiceConfig() error {
+	switch c.TSNetListenMode {
+	case "", TSNetListenModeListener:
+		c.TSNetListenMode = TSNetListenModeListener
+		return nil
+	case TSNetListenModeService:
+		if c.Funnel {
+			return fmt.Errorf("unsupported operating mode combination: listen-mode=service cannot be combined with funnel=true")
+		}
+		if c.TSNetServiceName == "" {
+			return fmt.Errorf("service-name is required when listen-mode=service")
+		}
+		if err := tailcfg.ServiceName(c.TSNetServiceName).Validate(); err != nil {
+			return fmt.Errorf("invalid service-name %q: %w", c.TSNetServiceName, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid listen-mode %q: must be %q or %q", c.TSNetListenMode, TSNetListenModeListener, TSNetListenModeService)
+	}
 }

@@ -12,6 +12,23 @@ import (
 	"github.com/spf13/pflag"
 )
 
+func TestMain(m *testing.M) {
+	homeDir, err := os.MkdirTemp("", "tgate-config-test-home-*")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(homeDir)
+	_ = os.Setenv("HOME", homeDir)
+
+	for _, entry := range os.Environ() {
+		key, _, found := strings.Cut(entry, "=")
+		if found && strings.HasPrefix(key, "TGATE_") {
+			_ = os.Unsetenv(key)
+		}
+	}
+	os.Exit(m.Run())
+}
+
 func TestParseArgsCLICompatibility(t *testing.T) {
 	cfg, err := ParseArgs([]string{"8080", "--funnel", "--verbose"})
 	if err != nil {
@@ -164,6 +181,225 @@ funnel-allowlist:
 	}
 	if got, want := funnelAllowlistStrings(cfg.FunnelAllowlist), []string{"198.51.100.0/24", "192.0.2.25/32"}; !slices.Equal(got, want) {
 		t.Fatalf("expected env funnel allowlist %v to override config, got %v", want, got)
+	}
+}
+
+func TestParseArgsDeviceNameDefaultsToTgate(t *testing.T) {
+	cfg, err := ParseArgs([]string{"8080"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got, want := cfg.TailscaleName, "tgate"; got != want {
+		t.Fatalf("expected default device name %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsDeviceNamePrecedenceCLIOverEnvOverConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeConfigFile(t, home, `
+port: 9000
+device-name: cfg-device
+`)
+	t.Setenv("TGATE_DEVICE_NAME", "env-device")
+
+	cfg, err := ParseArgs([]string{"8080", "--device-name", "cli-device"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got, want := cfg.TailscaleName, "cli-device"; got != want {
+		t.Fatalf("expected CLI device name %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsSupportsLegacyTailscaleName(t *testing.T) {
+	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("TGATE_TAILSCALE_NAME", "legacy-node")
+
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got, want := cfg.TailscaleName, "legacy-node"; got != want {
+		t.Fatalf("expected legacy tailscale name %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsRejectsConflictingDeviceAndLegacyTailscaleName(t *testing.T) {
+	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("TGATE_DEVICE_NAME", "device-node")
+	t.Setenv("TGATE_TAILSCALE_NAME", "legacy-node")
+
+	_, err := ParseArgs([]string{})
+	if err == nil {
+		t.Fatalf("expected conflicting device-name error")
+	}
+	if got, want := err.Error(), "conflicting configuration: device-name"; !strings.Contains(got, want) {
+		t.Fatalf("expected error containing %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsTSNetListenModeDefaults(t *testing.T) {
+	cfg, err := ParseArgs([]string{"8080"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.TSNetListenMode, TSNetListenModeListener; got != want {
+		t.Fatalf("expected default tsnet listen mode %q, got %q", want, got)
+	}
+	if got, want := cfg.TSNetServiceName, "svc:tgate"; got != want {
+		t.Fatalf("expected default tsnet service name %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsTSNetListenModePrecedenceCLIOverEnvOverConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeConfigFile(t, home, `
+port: 9000
+listen-mode: listener
+service-name: svc:cfg
+`)
+	t.Setenv("TGATE_LISTEN_MODE", "service")
+	t.Setenv("TGATE_SERVICE_NAME", "svc:env")
+
+	cfg, err := ParseArgs([]string{"8080", "--listen-mode", "listener", "--service-name", "svc:cli"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.TSNetListenMode, TSNetListenModeListener; got != want {
+		t.Fatalf("expected CLI tsnet listen mode %q, got %q", want, got)
+	}
+	if got, want := cfg.TSNetServiceName, "svc:cli"; got != want {
+		t.Fatalf("expected CLI tsnet service name %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsTSNetServiceModeFromEnvironment(t *testing.T) {
+	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("TGATE_LISTEN_MODE", "service")
+	t.Setenv("TGATE_SERVICE_NAME", "svc:from-env")
+
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.TSNetListenMode, TSNetListenModeService; got != want {
+		t.Fatalf("expected tsnet listen mode %q, got %q", want, got)
+	}
+	if got, want := cfg.TSNetServiceName, "svc:from-env"; got != want {
+		t.Fatalf("expected tsnet service name %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsSupportsLegacyTSNetModeNames(t *testing.T) {
+	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("TGATE_TSNET_LISTEN_MODE", "service")
+	t.Setenv("TGATE_TSNET_SERVICE_NAME", "svc:legacy")
+
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got, want := cfg.TSNetListenMode, TSNetListenModeService; got != want {
+		t.Fatalf("expected listen mode %q from legacy env, got %q", want, got)
+	}
+	if got, want := cfg.TSNetServiceName, "svc:legacy"; got != want {
+		t.Fatalf("expected service name %q from legacy env, got %q", want, got)
+	}
+}
+
+func TestParseArgsSupportsLegacyTSNetModeNamesInConfigFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeConfigFile(t, home, `
+port: 8080
+tsnet-listen-mode: service
+tsnet-service-name: svc:legacy-config
+`)
+
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got, want := cfg.TSNetListenMode, TSNetListenModeService; got != want {
+		t.Fatalf("expected listen mode %q from legacy config, got %q", want, got)
+	}
+	if got, want := cfg.TSNetServiceName, "svc:legacy-config"; got != want {
+		t.Fatalf("expected service name %q from legacy config, got %q", want, got)
+	}
+}
+
+func TestParseArgsRejectsInvalidTSNetListenMode(t *testing.T) {
+	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("TGATE_LISTEN_MODE", "bogus")
+
+	_, err := ParseArgs([]string{})
+	if err == nil {
+		t.Fatalf("expected listen mode validation error")
+	}
+	if got, want := err.Error(), `invalid listen-mode "bogus"`; !strings.Contains(got, want) {
+		t.Fatalf("expected error containing %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsRejectsInvalidTSNetServiceName(t *testing.T) {
+	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("TGATE_LISTEN_MODE", "service")
+	t.Setenv("TGATE_SERVICE_NAME", "not-a-service")
+
+	_, err := ParseArgs([]string{})
+	if err == nil {
+		t.Fatalf("expected tsnet service name validation error")
+	}
+	if got, want := err.Error(), `invalid service-name "not-a-service"`; !strings.Contains(got, want) {
+		t.Fatalf("expected error containing %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsRejectsServiceModeWithFunnel(t *testing.T) {
+	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("TGATE_LISTEN_MODE", "service")
+	t.Setenv("TGATE_FUNNEL", "true")
+
+	_, err := ParseArgs([]string{})
+	if err == nil {
+		t.Fatalf("expected mutual exclusivity validation error")
+	}
+	if got, want := err.Error(), "cannot be combined with funnel=true"; !strings.Contains(got, want) {
+		t.Fatalf("expected error containing %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsRejectsConflictingCanonicalAndLegacyListenMode(t *testing.T) {
+	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("TGATE_LISTEN_MODE", "listener")
+	t.Setenv("TGATE_TSNET_LISTEN_MODE", "service")
+
+	_, err := ParseArgs([]string{})
+	if err == nil {
+		t.Fatalf("expected conflicting mode-name error")
+	}
+	if got, want := err.Error(), "conflicting configuration: listen-mode"; !strings.Contains(got, want) {
+		t.Fatalf("expected error containing %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsRejectsConflictingCanonicalAndLegacyServiceName(t *testing.T) {
+	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("TGATE_LISTEN_MODE", "service")
+	t.Setenv("TGATE_SERVICE_NAME", "svc:canonical")
+	t.Setenv("TGATE_TSNET_SERVICE_NAME", "svc:legacy")
+
+	_, err := ParseArgs([]string{})
+	if err == nil {
+		t.Fatalf("expected conflicting service-name error")
+	}
+	if got, want := err.Error(), "conflicting configuration: service-name"; !strings.Contains(got, want) {
+		t.Fatalf("expected error containing %q, got %q", want, got)
 	}
 }
 

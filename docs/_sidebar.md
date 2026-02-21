@@ -1,5 +1,6 @@
 * [Home](/)
 * [Operating Modes](operating-modes.md)
+* [Mode Resolution Spec](mode-resolution-spec.md)
 * [Configuration](configuration.md)
 * [IP Whitelisting](ip-whitelisting.md)
 * [Troubleshooting](troubleshooting.md)

@@ -15,7 +15,7 @@ func TestBuildReadySummaryTailnetIncludesWebUI(t *testing.T) {
 		JSON:   false,
 	}
 
-	summary := BuildReadySummary(cfg, true, "https://node.ts.net", "http://localhost:1234", "https://node.ts.net:9999")
+	summary := BuildReadySummary(cfg, true, "https://node.ts.net", "http://localhost:1234", "https://node.ts.net:9999", TSNetDetails{})
 	if !summary.IsReady() {
 		t.Fatalf("expected summary to be ready")
 	}
@@ -35,14 +35,18 @@ func TestBuildReadySummaryTailnetIncludesWebUI(t *testing.T) {
 
 func TestBuildReadySummaryFunnelMode(t *testing.T) {
 	cfg := &config.Config{
-		Funnel: true,
-		Mock:   true,
-		NoUI:   false,
-		NoTUI:  false,
-		JSON:   true,
+		Funnel:          true,
+		Mock:            true,
+		NoUI:            false,
+		NoTUI:           false,
+		JSON:            true,
+		TSNetListenMode: config.TSNetListenModeListener,
 	}
 
-	summary := BuildReadySummary(cfg, false, "https://node.ts.net", "", "")
+	summary := BuildReadySummary(cfg, false, "https://node.ts.net", "", "", TSNetDetails{
+		ConfiguredListenMode: config.TSNetListenModeListener,
+		EffectiveListenMode:  config.TSNetListenModeListener,
+	})
 	if got, want := summary.Mode, ModeTSNet; got != want {
 		t.Fatalf("unexpected mode: got %q want %q", got, want)
 	}
@@ -61,6 +65,15 @@ func TestBuildReadySummaryFunnelMode(t *testing.T) {
 	if !summary.Capabilities.JSONLogging {
 		t.Fatalf("expected json logging capability to be true")
 	}
+	if got, want := summary.ConfiguredListenMode, config.TSNetListenModeListener; got != want {
+		t.Fatalf("unexpected configured tsnet listen mode: got %q want %q", got, want)
+	}
+	if got, want := summary.EffectiveListenMode, config.TSNetListenModeListener; got != want {
+		t.Fatalf("unexpected effective tsnet listen mode: got %q want %q", got, want)
+	}
+	if got := summary.ServiceName; got != "" {
+		t.Fatalf("expected empty tsnet service name, got %q", got)
+	}
 }
 
 func TestBuildReadySummaryUIDisabled(t *testing.T) {
@@ -68,7 +81,7 @@ func TestBuildReadySummaryUIDisabled(t *testing.T) {
 		NoUI: true,
 	}
 
-	summary := BuildReadySummary(cfg, true, "https://node.ts.net", "", "")
+	summary := BuildReadySummary(cfg, true, "https://node.ts.net", "", "", TSNetDetails{})
 	if got, want := summary.WebUIStatus, WebUIStatusDisabled; got != want {
 		t.Fatalf("unexpected web UI status: got %q want %q", got, want)
 	}
@@ -92,7 +105,7 @@ func TestSummaryFieldsExposeStableKeys(t *testing.T) {
 		NoUI:   false,
 		NoTUI:  false,
 	}
-	summary := BuildReadySummary(cfg, true, "https://node.ts.net", "http://localhost:8080", "https://node.ts.net:9999")
+	summary := BuildReadySummary(cfg, true, "https://node.ts.net", "http://localhost:8080", "https://node.ts.net:9999", TSNetDetails{})
 
 	fields := summary.Fields()
 	keys := make(map[string]bool, len(fields))
@@ -125,8 +138,51 @@ func TestBuildReadySummaryLocalModeUnavailableReason(t *testing.T) {
 		NoUI: false,
 	}
 
-	summary := BuildReadySummary(cfg, true, "https://node.ts.net", "", "")
+	summary := BuildReadySummary(cfg, true, "https://node.ts.net", "", "", TSNetDetails{})
 	if got, want := summary.WebUIReason, WebUIReasonSetupUnavailable; got != want {
 		t.Fatalf("unexpected web UI reason: got %q want %q", got, want)
+	}
+}
+
+func TestBuildReadySummaryTSNetServiceFQDNFromURL(t *testing.T) {
+	cfg := &config.Config{
+		NoUI:             true,
+		TSNetListenMode:  config.TSNetListenModeService,
+		TSNetServiceName: "svc:my-service",
+	}
+
+	summary := BuildReadySummary(cfg, false, "https://my-service.tail4cf751.ts.net", "", "", TSNetDetails{
+		ConfiguredListenMode: config.TSNetListenModeService,
+		EffectiveListenMode:  config.TSNetListenModeService,
+		ServiceName:          "svc:my-service",
+	})
+	if got, want := summary.ServiceFQDN, "my-service.tail4cf751.ts.net"; got != want {
+		t.Fatalf("unexpected service fqdn: got %q want %q", got, want)
+	}
+}
+
+func TestSummaryFieldsIncludeTSNetModeFields(t *testing.T) {
+	cfg := &config.Config{
+		NoUI:             true,
+		TSNetListenMode:  config.TSNetListenModeService,
+		TSNetServiceName: "svc:tgate",
+	}
+
+	summary := BuildReadySummary(cfg, false, "https://tgate.tail4cf751.ts.net", "", "", TSNetDetails{
+		ConfiguredListenMode: config.TSNetListenModeService,
+		EffectiveListenMode:  config.TSNetListenModeService,
+		ServiceName:          "svc:tgate",
+		ServiceFQDN:          "tgate.tail4cf751.ts.net",
+	})
+	fields := summary.Fields()
+	keys := make(map[string]bool, len(fields))
+	for _, field := range fields {
+		keys[field.Key] = true
+	}
+
+	for _, key := range []string{"tsnet_listen_mode_configured", "tsnet_listen_mode_effective", "tsnet_service_name", "tsnet_service_fqdn"} {
+		if !keys[key] {
+			t.Fatalf("expected field key %q to be present", key)
+		}
 	}
 }

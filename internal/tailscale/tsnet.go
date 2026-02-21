@@ -4,6 +4,7 @@ package tailscale
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,9 +14,15 @@ import (
 
 	"go.uber.org/zap"
 	"tailscale.com/ipn"
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 
 	"github.com/jaxxstorm/tgate/internal/logging"
+)
+
+const (
+	TSNetListenModeListener = "listener"
+	TSNetListenModeService  = "service"
 )
 
 // TSNetConfig holds configuration for tsnet mode
@@ -25,6 +32,17 @@ type TSNetConfig struct {
 	EnableFunnel bool
 	UseHTTPS     bool
 	ServePort    int
+	ListenMode   string
+	ServiceName  string
+}
+
+// TSNetReadyInfo captures serving details emitted once TSNet is ready.
+type TSNetReadyInfo struct {
+	ServiceURL           string
+	ConfiguredListenMode string
+	EffectiveListenMode  string
+	ServiceName          string
+	ServiceFQDN          string
 }
 
 // TSNetServer wraps a tsnet server with additional functionality
@@ -32,7 +50,7 @@ type TSNetServer struct {
 	server        *tsnet.Server
 	logger        *zap.Logger
 	config        TSNetConfig
-	readyCallback func(string)
+	readyCallback func(TSNetReadyInfo)
 	readyMu       sync.RWMutex
 }
 
@@ -56,6 +74,8 @@ func NewTSNetServer(config TSNetConfig, logger *zap.Logger) *TSNetServer {
 		logging.FunnelEnabled(config.EnableFunnel),
 		logging.HTTPSEnabled(config.UseHTTPS),
 		logging.ServePort(resolveTSNetServePort(config)),
+		zap.String("listen_mode", normalizeTSNetListenMode(config.ListenMode)),
+		zap.String("service_name", strings.TrimSpace(config.ServiceName)),
 	)
 
 	return &TSNetServer{
@@ -140,6 +160,20 @@ func (ts *TSNetServer) Start(ctx context.Context) (string, error) {
 
 // Serve starts serving HTTP on the tsnet server
 func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
+	configuredMode := normalizeTSNetListenMode(ts.config.ListenMode)
+	effectiveMode := effectiveTSNetListenMode(configuredMode)
+	if err := validateTSNetListenConfig(ts.config, configuredMode); err != nil {
+		ts.logger.Error("Invalid TSNet listen configuration",
+			logging.Component("tsnet_server"),
+			logging.TailscaleMode("tsnet"),
+			logging.Phase("listener_setup"),
+			zap.String("configured_listen_mode", configuredMode),
+			zap.String("service_name", strings.TrimSpace(ts.config.ServiceName)),
+			logging.Error(err),
+		)
+		return err
+	}
+
 	port, useTLS := ts.serveSettings()
 	addr := fmt.Sprintf(":%d", port)
 	if err := validateTSNetServeConfig(ts.config, port, useTLS); err != nil {
@@ -163,9 +197,12 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 		logging.FunnelEnabled(ts.config.EnableFunnel),
 		logging.HTTPSEnabled(useTLS),
 		logging.ServePort(port),
+		zap.String("configured_listen_mode", configuredMode),
+		zap.String("effective_listen_mode", effectiveMode),
+		zap.String("service_name", strings.TrimSpace(ts.config.ServiceName)),
 	)
 
-	ln, err := ts.listenForServe(addr, useTLS)
+	ln, serviceFQDN, serviceName, err := ts.listenForServe(addr, port, useTLS, effectiveMode)
 	if err != nil {
 		return err
 	}
@@ -190,7 +227,17 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 	if err != nil {
 		return err
 	}
-	ts.emitReady(serviceURL)
+	if effectiveMode == TSNetListenModeService && serviceFQDN != "" {
+		serviceURL = buildTSNetServiceURL(serviceFQDN, port, useTLS)
+	}
+
+	ts.emitReady(TSNetReadyInfo{
+		ServiceURL:           serviceURL,
+		ConfiguredListenMode: configuredMode,
+		EffectiveListenMode:  effectiveMode,
+		ServiceName:          serviceName,
+		ServiceFQDN:          serviceFQDN,
+	})
 
 	ts.logger.Info("TSNet HTTP server ready to serve",
 		logging.Component("tsnet_server"),
@@ -201,6 +248,11 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 		logging.FunnelEnabled(ts.config.EnableFunnel),
 		logging.HTTPSEnabled(useTLS),
 		logging.Status("serving"),
+		zap.String("configured_listen_mode", configuredMode),
+		zap.String("effective_listen_mode", effectiveMode),
+		zap.String("service_name", serviceName),
+		zap.String("service_fqdn", serviceFQDN),
+		logging.URL(serviceURL),
 	)
 
 	// Serve HTTP requests
@@ -218,14 +270,14 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 }
 
 // SetReadyCallback sets a callback that is invoked once tsnet serving is ready.
-func (ts *TSNetServer) SetReadyCallback(callback func(string)) {
+func (ts *TSNetServer) SetReadyCallback(callback func(TSNetReadyInfo)) {
 	ts.readyMu.Lock()
 	defer ts.readyMu.Unlock()
 	ts.readyCallback = callback
 }
 
-func (ts *TSNetServer) emitReady(serviceURL string) {
-	if strings.TrimSpace(serviceURL) == "" {
+func (ts *TSNetServer) emitReady(info TSNetReadyInfo) {
+	if strings.TrimSpace(info.ServiceURL) == "" {
 		return
 	}
 
@@ -233,11 +285,11 @@ func (ts *TSNetServer) emitReady(serviceURL string) {
 	callback := ts.readyCallback
 	ts.readyMu.RUnlock()
 	if callback != nil {
-		callback(serviceURL)
+		callback(info)
 	}
 }
 
-func (ts *TSNetServer) listenForServe(addr string, useTLS bool) (net.Listener, error) {
+func (ts *TSNetServer) listenForServe(addr string, port int, useTLS bool, effectiveMode string) (net.Listener, string, string, error) {
 	ts.logger.Info("Creating TSNet listener",
 		logging.Component("tsnet_server"),
 		logging.TailscaleMode("tsnet"),
@@ -247,21 +299,42 @@ func (ts *TSNetServer) listenForServe(addr string, useTLS bool) (net.Listener, e
 		zap.String("address", addr),
 		logging.FunnelEnabled(ts.config.EnableFunnel),
 		logging.HTTPSEnabled(useTLS),
+		zap.String("effective_listen_mode", effectiveMode),
+		zap.String("service_name", strings.TrimSpace(ts.config.ServiceName)),
 	)
 
 	var (
-		ln  net.Listener
-		err error
+		ln          net.Listener
+		err         error
+		serviceFQDN string
+		serviceName string
 	)
 
-	switch {
-	case ts.config.EnableFunnel:
-		ln, err = ts.server.ListenFunnel("tcp", addr)
-	case useTLS:
-		ln, err = ts.server.ListenTLS("tcp", addr)
+	switch effectiveMode {
+	case TSNetListenModeService:
+		serviceName = strings.TrimSpace(ts.config.ServiceName)
+		serviceMode := tsnet.ServiceModeHTTP{
+			Port:  uint16(port),
+			HTTPS: useTLS,
+		}
+		serviceListener, listenErr := ts.server.ListenService(serviceName, serviceMode)
+		if listenErr != nil {
+			err = formatListenServiceError(serviceName, listenErr)
+		} else {
+			ln = serviceListener
+			serviceFQDN = serviceListener.FQDN
+		}
 	default:
-		ln, err = ts.server.Listen("tcp", addr)
+		switch {
+		case ts.config.EnableFunnel:
+			ln, err = ts.server.ListenFunnel("tcp", addr)
+		case useTLS:
+			ln, err = ts.server.ListenTLS("tcp", addr)
+		default:
+			ln, err = ts.server.Listen("tcp", addr)
+		}
 	}
+
 	if err != nil {
 		ts.logger.Error("Failed to create TSNet listener",
 			logging.Component("tsnet_server"),
@@ -271,9 +344,11 @@ func (ts *TSNetServer) listenForServe(addr string, useTLS bool) (net.Listener, e
 			zap.String("address", addr),
 			logging.FunnelEnabled(ts.config.EnableFunnel),
 			logging.HTTPSEnabled(useTLS),
+			zap.String("effective_listen_mode", effectiveMode),
+			zap.String("service_name", serviceName),
 			logging.Error(err),
 		)
-		return nil, fmt.Errorf("failed to create tsnet listener: %w", err)
+		return nil, "", serviceName, err
 	}
 
 	ts.logger.Info("TSNet listener created successfully",
@@ -284,9 +359,12 @@ func (ts *TSNetServer) listenForServe(addr string, useTLS bool) (net.Listener, e
 		zap.String("address", addr),
 		logging.FunnelEnabled(ts.config.EnableFunnel),
 		logging.HTTPSEnabled(useTLS),
+		zap.String("effective_listen_mode", effectiveMode),
+		zap.String("service_name", serviceName),
+		zap.String("service_fqdn", serviceFQDN),
 	)
 
-	return ln, nil
+	return ln, serviceFQDN, serviceName, nil
 }
 
 func (ts *TSNetServer) serveSettings() (port int, useTLS bool) {
@@ -322,6 +400,51 @@ func validateTSNetServeConfig(config TSNetConfig, servePort int, useTLS bool) er
 	default:
 		return fmt.Errorf("tsnet funnel requires serve port 443, 8443, or 10000 (got %d)", servePort)
 	}
+}
+
+func validateTSNetListenConfig(config TSNetConfig, configuredMode string) error {
+	if configuredMode != TSNetListenModeListener && configuredMode != TSNetListenModeService {
+		return fmt.Errorf("invalid tsnet listen mode %q", configuredMode)
+	}
+	if configuredMode != TSNetListenModeService {
+		return nil
+	}
+	if config.EnableFunnel {
+		return fmt.Errorf("tsnet service mode is mutually exclusive with funnel")
+	}
+
+	serviceName := strings.TrimSpace(config.ServiceName)
+	if serviceName == "" {
+		return fmt.Errorf("tsnet service mode requires a non-empty service name")
+	}
+	if err := tailcfg.ServiceName(serviceName).Validate(); err != nil {
+		return fmt.Errorf("invalid tsnet service name %q: %w", serviceName, err)
+	}
+
+	servePort := resolveTSNetServePort(config)
+	if servePort <= 0 || servePort > 65535 {
+		return fmt.Errorf("tsnet service mode requires a valid TCP port, got %d", servePort)
+	}
+	return nil
+}
+
+func normalizeTSNetListenMode(listenMode string) string {
+	mode := strings.ToLower(strings.TrimSpace(listenMode))
+	if mode == "" {
+		return TSNetListenModeListener
+	}
+	return mode
+}
+
+func effectiveTSNetListenMode(configuredMode string) string {
+	return configuredMode
+}
+
+func formatListenServiceError(serviceName string, err error) error {
+	if errors.Is(err, tsnet.ErrUntaggedServiceHost) {
+		return fmt.Errorf("failed to create tsnet service listener for %q: %w. service hosts must be tagged nodes and may require admin approval", serviceName, err)
+	}
+	return fmt.Errorf("failed to create tsnet service listener for %q: %w. verify service host tags and approval prerequisites", serviceName, err)
 }
 
 func buildTSNetServiceURL(dnsName string, servePort int, useTLS bool) string {
