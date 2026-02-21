@@ -1,0 +1,30 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Go CLI application.
+  Core libraries: Kong (CLI parsing), Zap (structured logging), Bubble Tea/Lipgloss (TUI), Tailscale client + tsnet.
+  Domain: local service sharing for development and webhook testing.
+  Positioning: tgate is "local developer access over Tailscale."
+  Primary product capabilities:
+  - Proxy local developer services to a user's tailnet (private by default).
+  - Optionally proxy local developer services to the public internet using Tailscale Funnel.
+  - Provide mock endpoints and request/response visibility for testing and debugging.
+  Security posture:
+  - Tailnet mode is the default safe baseline.
+  - Funnel mode is explicitly opt-in and depends on HTTPS certificate prerequisites.
+
+rules:
+  proposal:
+    - Clearly separate tailnet-private behavior from Funnel-public behavior.
+    - Include concrete examples for `tgate <port>` and `tgate <port> --funnel`.
+    - Call out security and prerequisite implications whenever Funnel is introduced.
+  specs:
+    - Use normative language (MUST/SHOULD/MAY) for behavior requirements.
+    - Include at least one scenario for tailnet mode and one for Funnel mode.
+    - State default behavior and opt-in behavior explicitly.
+  design:
+    - Describe how local Tailscale mode and tsnet mode satisfy spec requirements.
+    - Capture failure handling for HTTPS certificate and Funnel setup issues.
+  tasks:
+    - Group tasks by user-facing capability before internal implementation details.
+    - Include validation tasks for both tailnet-only and funnel-public access paths.

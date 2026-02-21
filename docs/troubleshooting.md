@@ -1,0 +1,96 @@
+# Troubleshooting
+
+## Basic Checks
+
+```bash
+tgate --version
+tailscale status
+```
+
+## Tailnet-Only Connectivity
+
+Verify your local target service:
+
+```bash
+curl localhost:8080
+tgate 8080 --verbose
+```
+
+If `--funnel` is not set, access remains tailnet-only.
+
+## Tailscale And TSNet Log Location
+
+Tailscale and tsnet lifecycle logs are emitted through tgate's main logger:
+- In TUI mode: the **Application Logs** panel
+- In non-TUI mode: standard tgate console log output
+
+If you are debugging startup, certificate, or Funnel setup issues, use:
+
+```bash
+tgate 8080 --verbose
+```
+
+or in TUI mode:
+
+```bash
+tgate 8080
+```
+
+## Funnel Setup Issues
+
+For public access (`--funnel`), verify prerequisites:
+- HTTPS certificates enabled in Tailscale admin DNS settings
+- Funnel entitlement available for your tailnet
+
+Useful command:
+
+```bash
+tgate 8080 --funnel --verbose
+```
+
+## Funnel Allowlist Denials (`403`)
+
+If Funnel allowlist is configured, requests are denied when:
+- Source IP is not in the allowlist
+- Source IP cannot be resolved from trusted request metadata or socket remote address
+- PROXY protocol is expected (root-path Funnel allowlist mode) but missing
+
+Verify configuration:
+
+```bash
+echo "$TGATE_FUNNEL_ALLOWLIST"
+```
+
+Example config file key:
+
+```yaml
+funnel-allowlist:
+  - 203.0.113.10
+  - 198.51.100.0/24
+```
+
+If you set a non-root `set-path` (for example `/api`), tgate cannot use the
+Funnel TCP+PROXY mode and falls back to trusted HTTP source metadata.
+
+For full configuration and behavior details, see
+[IP Whitelisting](ip-whitelisting.md).
+
+## TUI Display Problems
+
+Use console mode:
+
+```bash
+tgate 8080 --no-tui --verbose
+```
+
+## Reset Serve State
+
+```bash
+tgate --cleanup-serve
+```
+
+Then retry with a minimal configuration:
+
+```bash
+tgate 8080
+```

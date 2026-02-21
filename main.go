@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 
 	"github.com/jaxxstorm/tgate/internal/config"
@@ -36,6 +38,9 @@ var Version = "dev"
 func main() {
 	cfg, err := config.Parse()
 	if err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			os.Exit(0)
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -126,16 +131,6 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Create proxy server
-	proxyConfig := proxy.Config{
-		TargetPort: cfg.Port,
-		UseTUI:     !cfg.NoTUI,
-		Mode:       serverMode,
-		Logger:     logger,
-	}
-
-	proxyServer := proxy.NewServer(proxyConfig)
-
 	// Determine which Tailscale mode to use
 	useLocalTailscale := false
 	var tsClient *tailscale.Client
@@ -168,6 +163,35 @@ func main() {
 			logging.Status("forced"),
 		)
 	}
+
+	// Create proxy server
+	requestedFunnelProxyProtocol := cfg.UseFunnelProxyProtocol()
+	effectiveFunnelProxyProtocol := requestedFunnelProxyProtocol && useLocalTailscale
+	if cfg.HasFunnelAllowlist() && !requestedFunnelProxyProtocol {
+		logger.Warn("Funnel allowlist active without PROXY protocol",
+			logging.Component("proxy_server"),
+			zap.String("set_path", cfg.GetSetPath()),
+			zap.String("reason", "non_root_mount_path"),
+		)
+	}
+	if cfg.HasFunnelAllowlist() && requestedFunnelProxyProtocol && !useLocalTailscale {
+		logger.Warn("Funnel allowlist active without PROXY protocol",
+			logging.Component("proxy_server"),
+			zap.String("reason", "local_tailscale_unavailable"),
+		)
+	}
+
+	proxyConfig := proxy.Config{
+		TargetPort:      cfg.Port,
+		UseTUI:          !cfg.NoTUI,
+		Mode:            serverMode,
+		Logger:          logger,
+		FunnelEnabled:   cfg.Funnel,
+		FunnelAllowlist: cfg.FunnelAllowlist,
+		PreferRemoteIP:  effectiveFunnelProxyProtocol,
+	}
+
+	proxyServer := proxy.NewServer(proxyConfig)
 
 	if cfg.NoTUI {
 		runWithoutTUI(ctx, logger, useLocalTailscale, tsClient, proxyServer, cfg)
@@ -325,9 +349,8 @@ func runWithTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bool,
 		// Create a new Tailscale client with a simple TUI logger for TUI mode
 		var tuiTsClient *tailscale.Client
 		if useLocalTailscale {
-			// Use a simple zap logger that directly routes to TUIOnlyLogger
-			simpleTUIZapLogger := tui.CreateSimpleTUIZapLogger(tuiOnlyLogger)
-			tuiTsClient = tailscale.NewClient(simpleTUIZapLogger)
+			// Use the standard TUI zap logger so level and field handling stay consistent.
+			tuiTsClient = tailscale.NewClient(tui.CreateTUIOnlyZapLogger(tuiOnlyLogger, cfg.Verbose))
 			// Verify it's still available with the new client
 			if !tuiTsClient.IsAvailable(ctx) {
 				tuiOnlyLogger.Errorf("Tailscale not available in TUI mode")
@@ -404,13 +427,23 @@ func setupLocalTailscale(ctx context.Context, tsClient *tailscale.Client, proxyS
 		logging.BindAddress("0.0.0.0"),
 	)
 
+	useFunnelProxyProtocol := cfg.UseFunnelProxyProtocol()
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", proxyPort),
 		Handler: proxyServer,
 	}
 
+	proxyListener, err := httputil.NewHTTPListener(httpServer.Addr, useFunnelProxyProtocol)
+	if err != nil {
+		logger.Fatal("Failed to create proxy listener",
+			logging.Component("proxy_server"),
+			logging.ProxyPort(proxyPort),
+			logging.Error(err),
+		)
+	}
+
 	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.Serve(proxyListener); err != nil && err != http.ErrServerClosed {
 			logger.Error(logging.MsgRuntimeError,
 				logging.Component("proxy_server"),
 				logging.ProxyPort(proxyPort),
@@ -419,14 +452,16 @@ func setupLocalTailscale(ctx context.Context, tsClient *tailscale.Client, proxyS
 		}
 	}()
 
-	// Wait for the server to be ready
-	if err := httputil.WaitForServerReady(ctx, fmt.Sprintf("localhost:%d", proxyPort), 2*time.Second); err != nil {
-		logger.Error("Proxy server failed to start",
-			logging.Component("proxy_server"),
-			logging.ProxyPort(proxyPort),
-			logging.Error(err),
-		)
-		return cleanup, uiCleanup, nil
+	// Wait for the server to be ready when plain HTTP probing is supported.
+	if !useFunnelProxyProtocol {
+		if err := httputil.WaitForServerReady(ctx, fmt.Sprintf("localhost:%d", proxyPort), 2*time.Second); err != nil {
+			logger.Error("Proxy server failed to start",
+				logging.Component("proxy_server"),
+				logging.ProxyPort(proxyPort),
+				logging.Error(err),
+			)
+			return cleanup, uiCleanup, nil
+		}
 	}
 
 	logger.Info(logging.MsgProxyStarted,
@@ -489,11 +524,12 @@ func setupLocalTailscale(ctx context.Context, tsClient *tailscale.Client, proxyS
 	)
 
 	tsConfig := tailscale.Config{
-		MountPath:    cfg.GetSetPath(),
-		EnableFunnel: cfg.Funnel,
-		UseHTTPS:     cfg.UseHTTPS,
-		ServePort:    cfg.GetServePort(),
-		ProxyPort:    proxyPort,
+		MountPath:           cfg.GetSetPath(),
+		EnableFunnel:        cfg.Funnel,
+		EnableProxyProtocol: useFunnelProxyProtocol,
+		UseHTTPS:            cfg.UseHTTPS,
+		ServePort:           cfg.GetServePort(),
+		ProxyPort:           proxyPort,
 	}
 
 	svcInfo, err := tsClient.SetupServe(ctx, tsConfig)
@@ -633,12 +669,18 @@ func setupTsnet(ctx context.Context, proxyServer *proxy.Server, logger *zap.Logg
 		logging.Component("tsnet_setup"),
 		logging.TailscaleMode("tsnet"),
 		logging.NodeName(cfg.TailscaleName),
+		logging.FunnelEnabled(cfg.Funnel),
+		logging.HTTPSEnabled(cfg.UseHTTPS),
+		logging.ServePort(cfg.GetServePort()),
 	)
 
 	// Use tsnet mode
 	tsnetConfig := tailscale.TSNetConfig{
-		Hostname: cfg.TailscaleName,
-		AuthKey:  cfg.AuthKey,
+		Hostname:     cfg.TailscaleName,
+		AuthKey:      cfg.AuthKey,
+		EnableFunnel: cfg.Funnel,
+		UseHTTPS:     cfg.UseHTTPS,
+		ServePort:    cfg.GetServePort(),
 	}
 
 	// Pass the zap.Logger directly instead of creating a sugared logger

@@ -2,65 +2,128 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
-	"github.com/alecthomas/kong"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
-
-// CLI represents the command line interface configuration
-type CLI struct {
-	Port          int    `kong:"arg,optional,help='Local port to expose'"`
-	TailscaleName string `kong:"short='n',default='tgate',help='Tailscale node name (only used with tsnet mode)'"`
-	Funnel        bool   `kong:"short='f',help='Enable Tailscale funnel (public internet access)'"`
-	Verbose       bool   `kong:"short='v',help='Enable verbose logging'"`
-	JSON          bool   `kong:"short='j',help='Output logs in JSON format'"`
-	LogFile       string `kong:"help='Log file path (optional)'"`
-	AuthKey       string `kong:"help='Tailscale auth key to create separate tsnet device'"`
-	ForceTsnet    bool   `kong:"help='Force tsnet mode even if local Tailscale is available'"`
-	SetPath       string `kong:"help='Set custom path for serve (default: /)'"`
-	ServePort     int    `kong:"help='Tailscale serve port (default: 80 for HTTP, 443 for HTTPS)'"`
-	UseHTTPS      bool   `kong:"help='Use HTTPS instead of HTTP for Tailscale serve'"`
-	NoTUI         bool   `kong:"help='Disable TUI and use simple console output'"`
-	NoUI          bool   `kong:"help='Disable web UI dashboard'"`
-	UIPort        int    `kong:"help='Custom port for web UI (default: auto-assigned)'"`
-	Version       bool   `kong:"help='Show version information'"`
-	Mock          bool   `kong:"short='m',help='Enable mock/testing mode (no backing server required, enables funnel by default)'"`
-	CleanupServe  bool   `kong:"help='Clear all Tailscale serve configurations and exit'"`
-}
 
 // Config holds the parsed and validated configuration
 type Config struct {
-	CLI
+	Port            int
+	TailscaleName   string
+	Funnel          bool
+	FunnelAllowlist []netip.Prefix
+	Verbose         bool
+	JSON            bool
+	LogFile         string
+	AuthKey         string
+	ForceTsnet      bool
+	SetPath         string
+	ServePort       int
+	UseHTTPS        bool
+	NoTUI           bool
+	NoUI            bool
+	UIPort          int
+	Version         bool
+	Mock            bool
+	CleanupServe    bool
 }
 
 // Parse parses command line arguments and returns a validated configuration
 func Parse() (*Config, error) {
-	var cli CLI
-	kong.Parse(&cli)
+	return ParseArgs(os.Args[1:])
+}
+
+// ParseArgs parses command line arguments and returns a validated configuration.
+// Exposed for tests.
+func ParseArgs(args []string) (*Config, error) {
+	v := viper.New()
+	if err := configureViper(v); err != nil {
+		return nil, err
+	}
+
+	state := &parseState{}
+	cmd, err := newRootCommand(v, state)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd.SetArgs(args)
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+
+	if err := cmd.Execute(); err != nil {
+		return nil, err
+	}
+
+	if helpRequested(cmd, args) {
+		return nil, pflag.ErrHelp
+	}
+
+	port := v.GetInt("port")
+	if state.portSet {
+		port = state.port
+	}
+
+	funnelAllowlist, err := parseFunnelAllowlist(normalizeList(v.Get("funnel-allowlist")))
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := &Config{
+		Port:            port,
+		TailscaleName:   v.GetString("tailscale-name"),
+		Funnel:          v.GetBool("funnel"),
+		FunnelAllowlist: funnelAllowlist,
+		Verbose:         v.GetBool("verbose"),
+		JSON:            v.GetBool("json"),
+		LogFile:         v.GetString("log-file"),
+		AuthKey:         v.GetString("auth-key"),
+		ForceTsnet:      v.GetBool("force-tsnet"),
+		SetPath:         v.GetString("set-path"),
+		ServePort:       v.GetInt("serve-port"),
+		UseHTTPS:        v.GetBool("use-https"),
+		NoTUI:           v.GetBool("no-tui"),
+		NoUI:            v.GetBool("no-ui"),
+		UIPort:          v.GetInt("ui-port"),
+		Version:         v.GetBool("version"),
+		Mock:            v.GetBool("mock"),
+		CleanupServe:    v.GetBool("cleanup-serve"),
+	}
 
 	// Handle version flag
-	if cli.Version {
-		return &Config{CLI: cli}, nil
+	if cfg.Version {
+		return cfg, nil
 	}
 
 	// Handle cleanup flag
-	if cli.CleanupServe {
-		return &Config{CLI: cli}, nil
+	if cfg.CleanupServe {
+		return cfg, nil
 	}
 
 	// Validate arguments
-	if cli.Mock && cli.Port != 0 {
-		return nil, fmt.Errorf("cannot specify both port and --mock flag\nUsage: tgate <port> [flags]     (proxy mode)\n       tgate --mock [flags]     (mock/testing mode)\n       tgate --version\n       tgate --cleanup-serve")
+	if cfg.Mock && cfg.Port != 0 {
+		return nil, fmt.Errorf("cannot specify both port and --mock flag%s", usageSuffix)
 	}
 
-	if !cli.Mock && cli.Port == 0 {
-		return nil, fmt.Errorf("port argument is required (or use --mock for testing mode)\nUsage: tgate <port> [flags]     (proxy mode)\n       tgate --mock [flags]     (mock/testing mode)\n       tgate --version\n       tgate --cleanup-serve")
+	if !cfg.Mock && cfg.Port == 0 {
+		return nil, fmt.Errorf("port argument is required (or use --mock for testing mode)%s", usageSuffix)
+	}
+
+	if cfg.Port < 0 {
+		return nil, fmt.Errorf("port must be a positive integer")
 	}
 
 	// Auto-configure options
-	config := &Config{CLI: cli}
-	config.applyAutoConfiguration()
+	cfg.applyAutoConfiguration()
 
-	return config, nil
+	return cfg, nil
 }
 
 // applyAutoConfiguration applies automatic configuration rules
@@ -94,4 +157,197 @@ func (c *Config) GetServePort() int {
 		return 80
 	}
 	return c.ServePort
+}
+
+// HasFunnelAllowlist reports whether Funnel allowlist enforcement is active.
+func (c *Config) HasFunnelAllowlist() bool {
+	return c.Funnel && len(c.FunnelAllowlist) > 0
+}
+
+// UseFunnelProxyProtocol reports whether Funnel traffic should use PROXY v2.
+// We only enable this for root-path serving because TCP forwarding does not
+// support mount-point routing semantics from serve web handlers.
+func (c *Config) UseFunnelProxyProtocol() bool {
+	return c.HasFunnelAllowlist() && c.GetSetPath() == "/"
+}
+
+const usageSuffix = "\nUsage: tgate <port> [flags]     (proxy mode)\n       tgate --mock [flags]     (mock/testing mode)\n       tgate --version\n       tgate --cleanup-serve"
+
+type parseState struct {
+	port    int
+	portSet bool
+}
+
+func configureViper(v *viper.Viper) error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to determine home directory: %w", err)
+	}
+
+	configPath := filepath.Join(homeDir, ".tgate", "config.yml")
+	v.SetConfigFile(configPath)
+	v.SetConfigType("yaml")
+	v.SetEnvPrefix("TGATE")
+	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
+	v.AutomaticEnv()
+	v.SetDefault("tailscale-name", "tgate")
+	v.SetDefault("funnel-allowlist", []string{})
+
+	if err := v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			return nil
+		}
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read config file %s: %w", configPath, err)
+	}
+
+	return nil
+}
+
+func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
+	cmd := &cobra.Command{
+		Use:   "tgate [port]",
+		Short: "Expose local services over Tailscale",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+
+			port, err := strconv.Atoi(args[0])
+			if err != nil || port <= 0 {
+				return fmt.Errorf("invalid port %q: must be a positive integer", args[0])
+			}
+
+			state.port = port
+			state.portSet = true
+			return nil
+		},
+	}
+
+	flags := cmd.Flags()
+	flags.StringP("tailscale-name", "n", "tgate", "Tailscale node name (only used with tsnet mode)")
+	flags.BoolP("funnel", "f", false, "Enable Tailscale funnel (public internet access)")
+	flags.BoolP("verbose", "v", false, "Enable verbose logging")
+	flags.BoolP("json", "j", false, "Output logs in JSON format")
+	flags.String("log-file", "", "Log file path (optional)")
+	flags.String("auth-key", "", "Tailscale auth key to create separate tsnet device")
+	flags.Bool("force-tsnet", false, "Force tsnet mode even if local Tailscale is available")
+	flags.String("set-path", "", "Set custom path for serve (default: /)")
+	flags.Int("serve-port", 0, "Tailscale serve port (default: 80 for HTTP, 443 for HTTPS)")
+	flags.Bool("use-https", false, "Use HTTPS instead of HTTP for Tailscale serve")
+	flags.Bool("no-tui", false, "Disable TUI and use simple console output")
+	flags.Bool("no-ui", false, "Disable web UI dashboard")
+	flags.Int("ui-port", 0, "Custom port for web UI (default: auto-assigned)")
+	flags.Bool("version", false, "Show version information")
+	flags.BoolP("mock", "m", false, "Enable mock/testing mode (no backing server required, enables funnel by default)")
+	flags.Bool("cleanup-serve", false, "Clear all Tailscale serve configurations and exit")
+
+	keys := []string{
+		"port",
+		"tailscale-name",
+		"funnel",
+		"funnel-allowlist",
+		"verbose",
+		"json",
+		"log-file",
+		"auth-key",
+		"force-tsnet",
+		"set-path",
+		"serve-port",
+		"use-https",
+		"no-tui",
+		"no-ui",
+		"ui-port",
+		"version",
+		"mock",
+		"cleanup-serve",
+	}
+
+	for _, key := range keys {
+		if flag := flags.Lookup(key); flag != nil {
+			if err := v.BindPFlag(key, flag); err != nil {
+				return nil, fmt.Errorf("failed to bind flag %s: %w", key, err)
+			}
+		}
+		if err := v.BindEnv(key); err != nil {
+			return nil, fmt.Errorf("failed to bind env for %s: %w", key, err)
+		}
+	}
+
+	return cmd, nil
+}
+
+func helpRequested(cmd *cobra.Command, args []string) bool {
+	help, err := cmd.Flags().GetBool("help")
+	if err == nil && help {
+		return true
+	}
+
+	return len(args) > 0 && args[0] == "help"
+}
+
+func normalizeList(value any) []string {
+	var values []string
+
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case string:
+		values = strings.Split(v, ",")
+	case []string:
+		values = append(values, v...)
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				values = append(values, s)
+			}
+		}
+	}
+
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		entry := strings.TrimSpace(value)
+		if entry == "" {
+			continue
+		}
+		normalized = append(normalized, entry)
+	}
+
+	return normalized
+}
+
+func parseFunnelAllowlist(entries []string) ([]netip.Prefix, error) {
+	parsed := make([]netip.Prefix, 0, len(entries))
+	for _, entry := range entries {
+		prefix, err := parseAllowlistEntry(entry)
+		if err != nil {
+			return nil, fmt.Errorf("invalid funnel allowlist entry %q: must be an IP address or CIDR block", entry)
+		}
+		parsed = append(parsed, prefix)
+	}
+	return parsed, nil
+}
+
+func parseAllowlistEntry(entry string) (netip.Prefix, error) {
+	if strings.Contains(entry, "/") {
+		prefix, err := netip.ParsePrefix(entry)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		return prefix.Masked(), nil
+	}
+
+	addr, err := netip.ParseAddr(entry)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	addr = addr.Unmap()
+
+	if addr.Is4() {
+		return netip.PrefixFrom(addr, 32), nil
+	}
+	return netip.PrefixFrom(addr, 128), nil
 }

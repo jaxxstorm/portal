@@ -92,6 +92,10 @@ func Operation(op string) zap.Field {
 	return zap.String("operation", op)
 }
 
+func Phase(phase string) zap.Field {
+	return zap.String("phase", phase)
+}
+
 func StartPort(port int) zap.Field {
 	return zap.Int("start_port", port)
 }

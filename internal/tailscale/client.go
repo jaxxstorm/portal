@@ -18,11 +18,12 @@ import (
 
 // Config holds configuration for Tailscale setup
 type Config struct {
-	MountPath    string
-	EnableFunnel bool
-	UseHTTPS     bool
-	ServePort    int
-	ProxyPort    int
+	MountPath           string
+	EnableFunnel        bool
+	EnableProxyProtocol bool
+	UseHTTPS            bool
+	ServePort           int
+	ProxyPort           int
 }
 
 // ServiceInfo holds information about the configured service
@@ -166,31 +167,29 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 	)
 
 	// Check if port is already in use
-	if sc.IsTCPForwardingOnPort(srvPort) {
-		c.logger.Error("Port already in use for TCP forwarding",
+	if sc.IsTCPForwardingOnPort(srvPort, "") || sc.IsServingWeb(srvPort, "") {
+		c.logger.Error("Port already in use for serve",
 			logging.Component("tailscale_serve"),
 			logging.ServePort(int(srvPort)),
 		)
-		return nil, fmt.Errorf("port %d is already serving TCP", srvPort)
+		return nil, fmt.Errorf("port %d is already in use by tailscale serve", srvPort)
 	}
 
-	// Set web handler
-	sc.SetWebHandler(h, dnsName, srvPort, mountPath, useTLS)
+	useFunnelProxyProtocol := config.EnableFunnel && config.EnableProxyProtocol
 
-	// If using HTTPS/TLS, set up TCP handler for TLS termination
-	if useTLS {
-		c.logger.Info("Setting up HTTPS TCP handler for TLS termination",
+	if useFunnelProxyProtocol {
+		c.logger.Info("Setting up TLS-terminated TCP forwarding with PROXY protocol v2",
 			logging.Component("tailscale_serve"),
 			logging.ServePort(int(srvPort)),
 		)
+		sc.SetTCPForwarding(srvPort, fmt.Sprintf("127.0.0.1:%d", config.ProxyPort), true, 2, dnsName)
+	} else {
+		// Set web handler
+		sc.SetWebHandler(h, dnsName, srvPort, mountPath, useTLS, "")
+	}
 
-		if sc.TCP == nil {
-			sc.TCP = make(map[uint16]*ipn.TCPPortHandler)
-		}
-		sc.TCP[srvPort] = &ipn.TCPPortHandler{
-			HTTPS: true,
-		}
-
+	// If using HTTPS/TLS, verify HTTPS feature support
+	if useTLS {
 		if err := c.enableHTTPSFeature(ctx); err != nil {
 			c.logger.Warn("HTTPS feature check failed",
 				logging.Component("tailscale_serve"),
@@ -341,7 +340,7 @@ func (c *Client) SetupUIServe(ctx context.Context, uiPort int) (uint16, string, 
 		Proxy: fmt.Sprintf("http://localhost:%d", uiPort),
 	}
 
-	sc.SetWebHandler(uiHandler, dnsName, tailscalePort, "/ui/", false) // HTTP only, no TLS
+	sc.SetWebHandler(uiHandler, dnsName, tailscalePort, "/ui/", false, "") // HTTP only, no TLS
 
 	// Apply the serve config
 	err = c.lc.SetServeConfig(ctx, sc)
@@ -556,7 +555,7 @@ func (c *Client) findAvailableTailscalePort(sc *ipn.ServeConfig, startPort uint1
 	)
 
 	for port := actualStartPort; port < actualStartPort+200; port++ {
-		if !sc.IsTCPForwardingOnPort(port) {
+		if !sc.IsTCPForwardingOnPort(port, "") {
 			// Also check if web handlers exist on this port
 			available := true
 			if sc.Web != nil {

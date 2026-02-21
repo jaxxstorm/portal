@@ -226,10 +226,15 @@ func (w *tuiZapWriter) Sync() error {
 	return nil
 }
 
-// CreateTUIOnlyZapLogger creates a zap logger that routes to TUI via TUIOnlyLogger
-func CreateTUIOnlyZapLogger(tuiLogger *TUIOnlyLogger) *zap.Logger {
+// CreateTUIOnlyZapLogger creates a zap logger that routes to TUI via TUIOnlyLogger.
+// When verbose is enabled, debug-level logs are emitted; otherwise INFO+ are emitted.
+func CreateTUIOnlyZapLogger(tuiLogger *TUIOnlyLogger, verbose bool) *zap.Logger {
 	// Create a custom writer that sends to TUI via the TUIOnlyLogger
 	tuiWriter := &tuiOnlyZapWriter{tuiLogger: tuiLogger}
+	level := zapcore.InfoLevel
+	if verbose {
+		level = zapcore.DebugLevel
+	}
 
 	// Use the standard console encoder config from logging package for consistency
 	encoderConfig := logging.ConsoleEncoderConfig()
@@ -239,7 +244,7 @@ func CreateTUIOnlyZapLogger(tuiLogger *TUIOnlyLogger) *zap.Logger {
 		zapcore.NewCore(
 			zapcore.NewConsoleEncoder(encoderConfig),
 			zapcore.AddSync(tuiWriter),
-			zapcore.InfoLevel,
+			level,
 		),
 	)
 
@@ -508,7 +513,7 @@ func parseStructuredFields(jsonFields string) string {
 
 	// Common fields to extract and format nicely - prioritize the most important ones
 	priorityFields := []string{
-		"component", "status", "operation", "error",
+		"component", "phase", "status", "operation", "error",
 		"proxy_port", "ui_port", "tailscale_port", "serve_port",
 		"url", "mount_path", "dns_name",
 	}

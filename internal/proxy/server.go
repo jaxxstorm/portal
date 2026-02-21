@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -61,29 +61,35 @@ func (lrw *LoggingResponseWriter) captureHeaders() {
 
 // Server handles HTTP requests with logging and optional proxying
 type Server struct {
-	logger      *zap.Logger
-	sugarLogger *zap.SugaredLogger
-	proxy       *httputil.ReverseProxy
-	targetURL   *url.URL
-	requestLog  []model.RequestLog
-	logMutex    sync.RWMutex
-	program     *tea.Program
-	useTUI      bool
-	mode        model.ServerMode
-	stats       *stats.Tracker
-	requestID   int64
-	webUIURL    string                   // Store the web UI URL for display
-	maxLogsCap  int                      // Maximum number of logs to keep
-	listeners   []func(model.RequestLog) // Event listeners for new requests
+	logger          *zap.Logger
+	sugarLogger     *zap.SugaredLogger
+	proxy           *httputil.ReverseProxy
+	targetURL       *url.URL
+	requestLog      []model.RequestLog
+	logMutex        sync.RWMutex
+	program         *tea.Program
+	useTUI          bool
+	mode            model.ServerMode
+	stats           *stats.Tracker
+	requestID       int64
+	webUIURL        string                   // Store the web UI URL for display
+	maxLogsCap      int                      // Maximum number of logs to keep
+	listeners       []func(model.RequestLog) // Event listeners for new requests
+	funnelEnabled   bool
+	funnelAllowlist []netip.Prefix
+	preferRemoteIP  bool
 }
 
 // Config holds configuration for the proxy server
 type Config struct {
-	TargetPort int
-	UseTUI     bool
-	Mode       model.ServerMode
-	Logger     *zap.Logger
-	MaxLogs    int // Maximum number of logs to keep (default: 1000)
+	TargetPort      int
+	UseTUI          bool
+	Mode            model.ServerMode
+	Logger          *zap.Logger
+	MaxLogs         int // Maximum number of logs to keep (default: 1000)
+	FunnelEnabled   bool
+	FunnelAllowlist []netip.Prefix
+	PreferRemoteIP  bool
 }
 
 // NewServer creates a new proxy server
@@ -114,17 +120,20 @@ func NewServer(config Config) *Server {
 	}
 
 	return &Server{
-		logger:      config.Logger,
-		sugarLogger: config.Logger.Sugar(),
-		proxy:       proxy,
-		targetURL:   targetURL,
-		requestLog:  make([]model.RequestLog, 0),
-		useTUI:      config.UseTUI,
-		mode:        config.Mode,
-		stats:       stats.NewTracker(),
-		requestID:   0,
-		maxLogsCap:  maxLogs,
-		listeners:   make([]func(model.RequestLog), 0),
+		logger:          config.Logger,
+		sugarLogger:     config.Logger.Sugar(),
+		proxy:           proxy,
+		targetURL:       targetURL,
+		requestLog:      make([]model.RequestLog, 0),
+		useTUI:          config.UseTUI,
+		mode:            config.Mode,
+		stats:           stats.NewTracker(),
+		requestID:       0,
+		maxLogsCap:      maxLogs,
+		listeners:       make([]func(model.RequestLog), 0),
+		funnelEnabled:   config.FunnelEnabled,
+		funnelAllowlist: config.FunnelAllowlist,
+		preferRemoteIP:  config.PreferRemoteIP,
 	}
 }
 
@@ -202,19 +211,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.String("remote_addr", r.RemoteAddr),
 	)
 
-	if !s.useTUI {
-		// Print request details to console (legacy mode)
-		s.printRequestDetails(r, reqHeaders, bodyString)
+	if s.enforceFunnelAllowlist(lrw, r) {
+		// Handle request based on mode
+		switch s.mode {
+		case model.ModeMock:
+			s.handleMockRequest(lrw, r, bodyString)
+		case model.ModeProxy:
+			s.proxy.ServeHTTP(lrw, r)
+		}
 	}
-
-	// Handle request based on mode
-	switch s.mode {
-	case model.ModeMock:
-		s.handleMockRequest(lrw, r, bodyString)
-	case model.ModeProxy:
-		s.proxy.ServeHTTP(lrw, r)
-	}
-
 	// Capture response headers after serving
 	lrw.captureHeaders()
 
@@ -254,10 +259,53 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.Int64("response_size", lrw.size),
 	)
 
-	if !s.useTUI {
-		// Print response summary (legacy mode)
-		s.printResponseSummary(lrw.statusCode, lrw.size, duration)
+}
+
+func (s *Server) enforceFunnelAllowlist(w http.ResponseWriter, r *http.Request) bool {
+	if !s.funnelEnabled || len(s.funnelAllowlist) == 0 {
+		return true
 	}
+
+	sourceIP, sourceSignal, resolved := resolveSourceIP(r, s.preferRemoteIP)
+	if !resolved {
+		s.logger.Warn("Funnel request denied",
+			logging.Component("funnel_allowlist"),
+			logging.FunnelEnabled(true),
+			zap.String("source_signal", sourceSignal),
+			zap.String("deny_reason", "source_ip_unresolved"),
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+		)
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return false
+	}
+
+	matchedEntry, allowed := allowlistedEntry(sourceIP, s.funnelAllowlist)
+	if !allowed {
+		s.logger.Warn("Funnel request denied",
+			logging.Component("funnel_allowlist"),
+			logging.FunnelEnabled(true),
+			zap.String("source_signal", sourceSignal),
+			zap.String("source_ip", sourceIP.String()),
+			zap.String("deny_reason", "source_ip_not_allowlisted"),
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+		)
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return false
+	}
+
+	s.logger.Info("Funnel request allowed",
+		logging.Component("funnel_allowlist"),
+		logging.FunnelEnabled(true),
+		zap.String("source_signal", sourceSignal),
+		zap.String("source_ip", sourceIP.String()),
+		zap.String("matched_allowlist_entry", matchedEntry.String()),
+		zap.String("method", r.Method),
+		zap.String("path", r.URL.Path),
+	)
+
+	return true
 }
 
 // captureRequest stores the log entry and notifies listeners
@@ -281,8 +329,8 @@ func (s *Server) captureRequest(logEntry model.RequestLog) {
 func (s *Server) handleMockRequest(w http.ResponseWriter, r *http.Request, body string) {
 	// Set response headers
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-TGate-Mode", "mock")
-	w.Header().Set("X-TGate-Timestamp", time.Now().UTC().Format(time.RFC3339))
+	w.Header().Set("X-tgate-mode", "mock")
+	w.Header().Set("X-tgate-timestamp", time.Now().UTC().Format(time.RFC3339))
 
 	// Create a simple response
 	response := map[string]interface{}{
@@ -307,74 +355,6 @@ func (s *Server) handleMockRequest(w http.ResponseWriter, r *http.Request, body 
 	// Return 200 OK with JSON response
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
-}
-
-// printRequestDetails prints request details to console (legacy mode)
-func (s *Server) printRequestDetails(r *http.Request, headers map[string]string, body string) {
-	fmt.Printf("\n╭─ %s %s\n", r.Method, r.URL.String())
-	fmt.Printf("├─ From: %s\n", r.RemoteAddr)
-	fmt.Printf("├─ Time: %s\n", time.Now().Format("15:04:05"))
-
-	if len(headers) > 0 {
-		fmt.Printf("├─ Headers:\n")
-
-		// Sort headers for consistent display
-		var sortedHeaders []string
-		for k := range headers {
-			sortedHeaders = append(sortedHeaders, k)
-		}
-		sort.Strings(sortedHeaders)
-
-		for i, k := range sortedHeaders {
-			prefix := "│  "
-			if i == len(sortedHeaders)-1 && body == "" {
-				prefix = "│  "
-			}
-			fmt.Printf("%s%s: %s\n", prefix, k, headers[k])
-		}
-	}
-
-	if body != "" && len(body) < 1000 { // Only show small bodies
-		fmt.Printf("├─ Body:\n")
-		lines := strings.Split(body, "\n")
-		for i, line := range lines {
-			prefix := "│  "
-			if i == len(lines)-1 {
-				prefix = "│  "
-			}
-			fmt.Printf("%s%s\n", prefix, line)
-		}
-	} else if body != "" {
-		fmt.Printf("├─ Body: [%d bytes - too large to display]\n", len(body))
-	}
-
-	fmt.Printf("╰─ Proxying to %s\n", s.getTargetDescription())
-}
-
-// getTargetDescription returns a description of the target
-func (s *Server) getTargetDescription() string {
-	switch s.mode {
-	case model.ModeMock:
-		return "mock testing mode (no backing server)"
-	case model.ModeProxy:
-		return s.targetURL.String()
-	default:
-		return "unknown mode"
-	}
-}
-
-// printResponseSummary prints response summary to console (legacy mode)
-func (s *Server) printResponseSummary(statusCode int, size int64, duration time.Duration) {
-	statusIcon := "✓"
-	if statusCode >= 400 {
-		statusIcon = "✗"
-	}
-
-	fmt.Printf("   %s %d • %s • %d bytes\n",
-		statusIcon,
-		statusCode,
-		duration.Round(time.Millisecond),
-		size)
 }
 
 // GetRequestLogs returns a copy of the request logs (implements model.LogProvider)
