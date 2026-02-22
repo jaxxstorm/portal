@@ -22,6 +22,25 @@ type RequestLog struct {
 	StatusCode  int               `json:"status_code"` // Convenience field for UI
 }
 
+// EndpointState represents startup/endpoint reachability details for TUI.
+type EndpointState struct {
+	Readiness string `json:"readiness"`
+	Mode      string `json:"mode"`
+	Exposure  string `json:"exposure"`
+
+	ServiceURL string `json:"service_url"`
+
+	WebUIStatus string `json:"web_ui_status"`
+	WebUIURL    string `json:"web_ui_url,omitempty"`
+	WebUIReason string `json:"web_ui_reason,omitempty"`
+}
+
+const (
+	EndpointReadinessStarting = "starting"
+	EndpointReadinessReady    = "ready"
+	EndpointReadinessFailed   = "failed"
+)
+
 // ResponseLog represents the response part of a logged request
 type ResponseLog struct {
 	StatusCode    int               `json:"status_code"`

@@ -18,10 +18,19 @@ import (
 
 // SetupLocalTailscaleQuiet sets up Tailscale serve with minimal TUI logging
 func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, proxyServer *proxy.Server, logger *tui.TUIOnlyLogger, cfg *config.Config, uiFiles fs.FS) (cleanup func() error, uiCleanup func() error, serviceInfo *tailscale.ServiceInfo) {
+	if cfg.IsServiceMode() {
+		if err := tsClient.ValidateServiceHostIdentity(ctx, cfg.TSNetServiceName); err != nil {
+			logger.Errorf("Service mode host identity invalid service_name=%s error=%v", cfg.TSNetServiceName, err)
+			proxyServer.MarkEndpointFailure(err.Error())
+			return nil, nil, nil
+		}
+	}
+
 	// Find an available port for our local proxy server using random allocation
 	proxyPort, err := tailscale.FindAvailableLocalPort()
 	if err != nil {
 		logger.Errorf("Port allocation failed: %v", err)
+		proxyServer.MarkEndpointFailure(err.Error())
 		return nil, nil, nil
 	}
 
@@ -37,6 +46,7 @@ func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, p
 	proxyListener, err := httputil.NewHTTPListener(httpServer.Addr, useFunnelProxyProtocol)
 	if err != nil {
 		logger.Errorf("Proxy listener setup failed port=%d error=%v", proxyPort, err)
+		proxyServer.MarkEndpointFailure(err.Error())
 		return nil, nil, nil
 	}
 
@@ -50,6 +60,7 @@ func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, p
 	if !useFunnelProxyProtocol {
 		if err := httputil.WaitForServerReady(ctx, fmt.Sprintf("localhost:%d", proxyPort), 2*time.Second); err != nil {
 			logger.Errorf("Proxy server failed to start port=%d error=%v", proxyPort, err)
+			proxyServer.MarkEndpointFailure(err.Error())
 			return nil, nil, nil
 		}
 	}
@@ -103,6 +114,7 @@ func SetupLocalTailscaleQuiet(ctx context.Context, tsClient *tailscale.Client, p
 	serviceInfo, err = tsClient.SetupServe(ctx, tsConfig)
 	if err != nil {
 		logger.Errorf("Tailscale serve setup failed config=%+v error=%v", tsConfig, err)
+		proxyServer.MarkEndpointFailure(err.Error())
 		return nil, nil, nil
 	}
 
@@ -157,6 +169,7 @@ func SetupTsnetQuiet(ctx context.Context, proxyServer *proxy.Server, logger *tui
 	go func() {
 		if err := tsnetServer.Serve(ctx, proxyServer); err != nil {
 			logger.Errorf("TSNet server error: %v", err)
+			proxyServer.MarkEndpointFailure(err.Error())
 		}
 	}()
 

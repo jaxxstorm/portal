@@ -308,6 +308,53 @@ func TestParseArgsTSNetListenModeDefaults(t *testing.T) {
 	if got, want := cfg.TSNetServiceName, "svc:portal"; got != want {
 		t.Fatalf("expected default tsnet service name %q, got %q", want, got)
 	}
+	if cfg.IsServiceMode() {
+		t.Fatalf("expected listener default mode to not be service mode")
+	}
+}
+
+func TestGetServePortDefaultsToTargetPortInServiceMode(t *testing.T) {
+	cfg, err := ParseArgs([]string{"8080", "--listen-mode", "service", "--service-name", "svc:portal"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.GetServePort(), 8080; got != want {
+		t.Fatalf("expected default serve-port %d in service mode, got %d", want, got)
+	}
+}
+
+func TestGetServePortDefaultsToEightyInListenerMode(t *testing.T) {
+	cfg, err := ParseArgs([]string{"8080", "--listen-mode", "listener"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.GetServePort(), 80; got != want {
+		t.Fatalf("expected default serve-port %d in listener mode, got %d", want, got)
+	}
+}
+
+func TestGetServePortUsesExplicitOverrideInServiceMode(t *testing.T) {
+	cfg, err := ParseArgs([]string{"8080", "--listen-mode", "service", "--service-name", "svc:portal", "--serve-port", "9090"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.GetServePort(), 9090; got != want {
+		t.Fatalf("expected explicit serve-port %d to win, got %d", want, got)
+	}
+}
+
+func TestGetServePortDefaultsToHTTPSPortInServiceMode(t *testing.T) {
+	cfg, err := ParseArgs([]string{"8080", "--listen-mode", "service", "--service-name", "svc:portal", "--use-https"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.GetServePort(), 443; got != want {
+		t.Fatalf("expected default HTTPS serve-port %d, got %d", want, got)
+	}
 }
 
 func TestParseArgsTSNetListenModePrecedenceCLIOverEnvOverConfig(t *testing.T) {
@@ -349,6 +396,9 @@ func TestParseArgsTSNetServiceModeFromEnvironment(t *testing.T) {
 	}
 	if got, want := cfg.TSNetServiceName, "svc:from-env"; got != want {
 		t.Fatalf("expected tsnet service name %q, got %q", want, got)
+	}
+	if !cfg.IsServiceMode() {
+		t.Fatalf("expected service listen mode to be reported as service mode")
 	}
 }
 

@@ -55,6 +55,7 @@ Supporting inputs:
 
 - `listen-mode=service` MUST NOT be combined with `funnel=true`.
 - `service-name` MUST be a valid `svc:<dns-label>` value when service mode is selected.
+- Service mode host identity MUST include at least one ACL tag (`tag:*`); otherwise startup fails before service advertisement.
 - Invalid combinations fail startup configuration validation (no silent fallback).
 
 ## Backend-Specific Behavior

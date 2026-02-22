@@ -193,6 +193,11 @@ func (c *Config) GetServePort() int {
 		if c.UseHTTPS {
 			return 443
 		}
+		// In service mode, default to the target service port so the exposed
+		// service endpoint aligns with operator-defined service endpoints.
+		if c.EffectiveTSNetListenMode() == TSNetListenModeService && c.Port > 0 {
+			return c.Port
+		}
 		return 80
 	}
 	return c.ServePort
@@ -218,6 +223,11 @@ func (c *Config) EffectiveTSNetListenMode() string {
 		mode = TSNetListenModeListener
 	}
 	return mode
+}
+
+// IsServiceMode reports whether runtime listen mode resolves to service mode.
+func (c *Config) IsServiceMode() bool {
+	return c.EffectiveTSNetListenMode() == TSNetListenModeService
 }
 
 const usageSuffix = "\nUsage: portal <port> [flags]     (proxy mode)\n       portal --mock [flags]     (mock/testing mode)\n       portal --version\n       portal --cleanup-serve"
@@ -293,8 +303,8 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 	flags.Bool("version", false, "Show version information")
 	flags.BoolP("mock", "m", false, "Enable mock/testing mode (no backing server required)")
 	flags.Bool("cleanup-serve", false, "Clear all Tailscale serve configurations and exit")
-	flags.String(listenModeKey, "", "Listen mode: listener or service (default: listener)")
-	flags.String(serviceNameKey, "", "Service name used when listen-mode=service (default: svc:portal)")
+	flags.String(listenModeKey, "", "Listen mode: listener or service (default: listener; service mode requires tag-based identity)")
+	flags.String(serviceNameKey, "", "Service name used when listen-mode=service (default: svc:portal; requires tagged host identity)")
 	flags.String(legacyListenModeKey, "", "Deprecated alias for --listen-mode")
 	flags.String(legacyServiceNameKey, "", "Deprecated alias for --service-name")
 	_ = flags.MarkDeprecated(legacyTailscaleNameKey, "use --device-name instead")

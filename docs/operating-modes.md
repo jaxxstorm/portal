@@ -101,7 +101,9 @@ portal 8080 --listen-mode service --funnel
 - Local-daemon backend configures service-scoped serve behavior.
 - tsnet backend uses `tsnet.Server.ListenService`.
 - Service mode requires valid `svc:<dns-label>` naming.
-- Service advertisement may require tagged-node identity and approval in your tailnet.
+- Service mode requires tag-based host identity; startup fails early if the node has no `tag:*` identity.
+- Service advertisement still may require admin approval in your tailnet after identity validation.
+- Service mode defaults `serve-port` to the target port unless explicitly overridden.
 
 ## Startup Output
 

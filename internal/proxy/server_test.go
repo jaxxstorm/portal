@@ -216,6 +216,51 @@ func TestServeHTTPNonTUIModeDoesNotWriteLegacyConsoleOutput(t *testing.T) {
 	}
 }
 
+func TestEndpointStateDefaultsAndFailureTransition(t *testing.T) {
+	initial := model.EndpointState{
+		Readiness:   model.EndpointReadinessStarting,
+		Mode:        "local_daemon",
+		Exposure:    "tailnet",
+		WebUIStatus: "unavailable",
+		WebUIReason: "ui_setup_unavailable",
+	}
+	server := NewServer(Config{
+		Mode:            model.ModeMock,
+		UseTUI:          true,
+		Logger:          zap.NewNop(),
+		InitialEndpoint: initial,
+	})
+
+	got := server.GetEndpointState()
+	if got != initial {
+		t.Fatalf("unexpected initial endpoint state: got %+v want %+v", got, initial)
+	}
+
+	server.SetWebUIURL("http://node.tail4cf751.ts.net:8141/ui/")
+	got = server.GetEndpointState()
+	if got.WebUIStatus != "enabled" {
+		t.Fatalf("expected web UI status to become enabled, got %q", got.WebUIStatus)
+	}
+	if got.WebUIReason != "" {
+		t.Fatalf("expected web UI reason to be cleared, got %q", got.WebUIReason)
+	}
+
+	server.MarkEndpointFailure("funnel requires HTTPS on port 443")
+	got = server.GetEndpointState()
+	if got.Readiness != model.EndpointReadinessFailed {
+		t.Fatalf("expected failed readiness after failure transition, got %q", got.Readiness)
+	}
+	if got.ServiceURL != "" {
+		t.Fatalf("expected service URL to be cleared on failure, got %q", got.ServiceURL)
+	}
+	if got.WebUIStatus != "unavailable" {
+		t.Fatalf("expected unavailable web UI status on failure, got %q", got.WebUIStatus)
+	}
+	if got.WebUIReason != "funnel requires HTTPS on port 443" {
+		t.Fatalf("unexpected failure reason: %q", got.WebUIReason)
+	}
+}
+
 func mustPrefixes(t *testing.T, values ...string) []netip.Prefix {
 	t.Helper()
 

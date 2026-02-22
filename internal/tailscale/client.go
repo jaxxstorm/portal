@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	"tailscale.com/client/local"
 	"tailscale.com/ipn"
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 
 	"github.com/jaxxstorm/portal/internal/logging"
@@ -112,6 +113,16 @@ func (c *Client) GetDNSName(ctx context.Context) (string, error) {
 	return dnsName, nil
 }
 
+// ValidateServiceHostIdentity ensures the current node can act as a Tailscale
+// Service host before service-mode serve configuration is attempted.
+func (c *Client) ValidateServiceHostIdentity(ctx context.Context, serviceName string) error {
+	status, err := c.lc.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot validate service host identity for %q: failed to get tailscale status: %w", serviceName, err)
+	}
+	return validateServiceHostIdentity(status, serviceName)
+}
+
 // SetupServe configures Tailscale serve for the given configuration
 func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, error) {
 	// Use shorter log messages to avoid TUI truncation issues
@@ -185,6 +196,8 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 		logging.Component("tailscale_serve"),
 		logging.ServePort(int(srvPort)),
 		zap.Bool("use_tls", useTLS),
+		zap.String("listen_mode", listenMode),
+		zap.String("service_name", serviceName),
 	)
 
 	var serviceNameTag tailcfg.ServiceName
@@ -192,6 +205,17 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 		serviceNameTag = tailcfg.ServiceName(serviceName)
 		if err := serviceNameTag.Validate(); err != nil {
 			return nil, fmt.Errorf("invalid service name %q: %w", serviceName, err)
+		}
+		if err := validateServiceHostIdentity(status, serviceName); err != nil {
+			c.logger.Error(logging.MsgServiceHostIdentityInvalid,
+				logging.Component("tailscale_serve"),
+				zap.String("service_name", serviceName),
+				zap.String("dns_name", dnsName),
+				zap.Strings("node_tags", serviceHostTags(status)),
+				logging.Status("service_host_requires_tagged_identity"),
+				logging.Error(err),
+			)
+			return nil, err
 		}
 		if strings.TrimSpace(magicDNSSuffix) == "" {
 			return nil, fmt.Errorf("cannot configure service %q: missing tailnet MagicDNS suffix", serviceName)
@@ -358,6 +382,33 @@ func normalizeServeListenMode(mode string) string {
 		return TSNetListenModeListener
 	}
 	return mode
+}
+
+func serviceHostTags(status *ipnstate.Status) []string {
+	if status == nil || status.Self == nil || status.Self.Tags == nil {
+		return nil
+	}
+	return status.Self.Tags.AsSlice()
+}
+
+func hasTagBasedIdentity(tags []string) bool {
+	for _, tag := range tags {
+		if strings.HasPrefix(strings.TrimSpace(tag), "tag:") {
+			return true
+		}
+	}
+	return false
+}
+
+func validateServiceHostIdentity(status *ipnstate.Status, serviceName string) error {
+	tags := serviceHostTags(status)
+	if hasTagBasedIdentity(tags) {
+		return nil
+	}
+	return fmt.Errorf(
+		"cannot configure service %q: service hosts must use tag-based identity; no ACL tags found on this device",
+		serviceName,
+	)
 }
 
 func (c *Client) ensureServiceAdvertised(ctx context.Context, svcName tailcfg.ServiceName) error {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jaxxstorm/portal/internal/config"
 	"github.com/jaxxstorm/portal/internal/logging"
+	"github.com/jaxxstorm/portal/internal/model"
 )
 
 const (
@@ -157,6 +158,22 @@ func ResolveWebUIReason(uiDisabled bool, useLocalDaemon bool, webUIURL string) s
 
 func (s Summary) IsReady() bool {
 	return s.Readiness == ReadinessReady && strings.TrimSpace(s.ServiceURL) != ""
+}
+
+func (s Summary) EndpointState() model.EndpointState {
+	state := model.EndpointState{
+		Readiness:   strings.TrimSpace(s.Readiness),
+		Mode:        strings.TrimSpace(s.Mode),
+		Exposure:    strings.TrimSpace(s.Exposure),
+		ServiceURL:  strings.TrimSpace(s.ServiceURL),
+		WebUIStatus: strings.TrimSpace(s.WebUIStatus),
+		WebUIURL:    strings.TrimSpace(s.WebUIURL),
+		WebUIReason: strings.TrimSpace(s.WebUIReason),
+	}
+	if state.Readiness == "" {
+		state.Readiness = model.EndpointReadinessStarting
+	}
+	return state
 }
 
 func (s Summary) Fields() []zap.Field {

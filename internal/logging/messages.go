@@ -22,15 +22,16 @@ const (
 	MsgConnectionFailed  = "Connection failed"
 
 	// Tailscale messages
-	MsgTailscaleDetected      = "Tailscale daemon detected"
-	MsgTailscaleNotAvailable  = "Tailscale daemon not available"
-	MsgTailscaleServeSetup    = "Tailscale serve configuration"
-	MsgTailscaleServeSuccess  = "Tailscale serve configured successfully"
-	MsgTailscaleFunnelEnabled = "Tailscale funnel enabled"
-	MsgTailscaleConfiguration = "Tailscale configuration"
-	MsgTailscaleAvailability  = "Checking Tailscale availability"
-	MsgTailscaleDaemonReady   = "Tailscale daemon available"
-	MsgTailscaleDaemonMissing = "Tailscale daemon not available"
+	MsgTailscaleDetected          = "Tailscale daemon detected"
+	MsgTailscaleNotAvailable      = "Tailscale daemon not available"
+	MsgTailscaleServeSetup        = "Tailscale serve configuration"
+	MsgTailscaleServeSuccess      = "Tailscale serve configured successfully"
+	MsgTailscaleFunnelEnabled     = "Tailscale funnel enabled"
+	MsgTailscaleConfiguration     = "Tailscale configuration"
+	MsgTailscaleAvailability      = "Checking Tailscale availability"
+	MsgTailscaleDaemonReady       = "Tailscale daemon available"
+	MsgTailscaleDaemonMissing     = "Tailscale daemon not available"
+	MsgServiceHostIdentityInvalid = "Service host identity is not tag-based"
 
 	// Proxy messages
 	MsgProxyStarting   = "Proxy server starting"

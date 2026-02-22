@@ -91,7 +91,8 @@ type Server struct {
 	mode            model.ServerMode
 	stats           *stats.Tracker
 	requestID       int64
-	webUIURL        string                   // Store the web UI URL for display
+	endpoint        model.EndpointState
+	endpointMu      sync.RWMutex
 	maxLogsCap      int                      // Maximum number of logs to keep
 	listeners       []func(model.RequestLog) // Event listeners for new requests
 	funnelEnabled   bool
@@ -109,6 +110,7 @@ type Config struct {
 	FunnelEnabled   bool
 	FunnelAllowlist []netip.Prefix
 	PreferRemoteIP  bool
+	InitialEndpoint model.EndpointState
 }
 
 // NewServer creates a new proxy server
@@ -148,6 +150,7 @@ func NewServer(config Config) *Server {
 		mode:            config.Mode,
 		stats:           stats.NewTracker(),
 		requestID:       0,
+		endpoint:        config.InitialEndpoint,
 		maxLogsCap:      maxLogs,
 		listeners:       make([]func(model.RequestLog), 0),
 		funnelEnabled:   config.FunnelEnabled,
@@ -163,12 +166,52 @@ func (s *Server) SetProgram(p *tea.Program) {
 
 // SetWebUIURL stores the web UI URL for display
 func (s *Server) SetWebUIURL(url string) {
-	s.webUIURL = url
+	s.endpointMu.Lock()
+	defer s.endpointMu.Unlock()
+
+	s.endpoint.WebUIURL = strings.TrimSpace(url)
+	if s.endpoint.WebUIURL == "" {
+		if s.endpoint.WebUIStatus == "" {
+			s.endpoint.WebUIStatus = "unavailable"
+		}
+		return
+	}
+
+	s.endpoint.WebUIStatus = "enabled"
+	s.endpoint.WebUIReason = ""
 }
 
 // GetWebUIURL returns the stored web UI URL
 func (s *Server) GetWebUIURL() string {
-	return s.webUIURL
+	s.endpointMu.RLock()
+	defer s.endpointMu.RUnlock()
+	return s.endpoint.WebUIURL
+}
+
+func (s *Server) SetEndpointState(state model.EndpointState) {
+	s.endpointMu.Lock()
+	defer s.endpointMu.Unlock()
+	s.endpoint = state
+}
+
+func (s *Server) GetEndpointState() model.EndpointState {
+	s.endpointMu.RLock()
+	defer s.endpointMu.RUnlock()
+	return s.endpoint
+}
+
+func (s *Server) MarkEndpointFailure(reason string) {
+	s.endpointMu.Lock()
+	defer s.endpointMu.Unlock()
+
+	s.endpoint.Readiness = model.EndpointReadinessFailed
+	s.endpoint.ServiceURL = ""
+	if strings.TrimSpace(reason) != "" {
+		s.endpoint.WebUIReason = strings.TrimSpace(reason)
+	}
+	if s.endpoint.WebUIStatus == "" || s.endpoint.WebUIStatus == "enabled" {
+		s.endpoint.WebUIStatus = "unavailable"
+	}
 }
 
 // AddListener adds a listener function that will be called for each new request

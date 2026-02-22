@@ -64,6 +64,20 @@ Service mode and Funnel are mutually exclusive. Use one:
 - service mode for tailnet service exposure
 - listener mode with Funnel for public exposure
 
+## Service Mode Host Identity
+
+Service mode requires a tag-based host identity. If a node is authenticated as
+a user device (no `tag:*` identity), portal fails startup before advertising
+the service.
+
+Check node tags:
+
+```bash
+tailscale status --json | jq '.Self.Tags'
+```
+
+If tags are empty, authenticate this node with a tagged identity and retry.
+
 ## Funnel Allowlist Denials (`403`)
 
 If Funnel allowlist is configured, requests are denied when:

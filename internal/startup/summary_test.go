@@ -208,3 +208,23 @@ func TestSummaryFieldsIncludeTSNetModeFields(t *testing.T) {
 		}
 	}
 }
+
+func TestSummaryEndpointStateProjection(t *testing.T) {
+	cfg := &config.Config{
+		Funnel: false,
+		NoUI:   false,
+	}
+
+	summary := BuildReadySummary(cfg, true, "http://portal.tail4cf751.ts.net", "", "http://node.tail4cf751.ts.net:8141/ui/", TSNetDetails{})
+	state := summary.EndpointState()
+
+	if got, want := state.Readiness, ReadinessReady; got != want {
+		t.Fatalf("unexpected readiness: got %q want %q", got, want)
+	}
+	if got, want := state.ServiceURL, "http://portal.tail4cf751.ts.net"; got != want {
+		t.Fatalf("unexpected service URL: got %q want %q", got, want)
+	}
+	if got, want := state.WebUIStatus, WebUIStatusEnabled; got != want {
+		t.Fatalf("unexpected web UI status: got %q want %q", got, want)
+	}
+}

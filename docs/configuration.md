@@ -35,6 +35,10 @@ serve-port: 80
 no-tui: false
 ```
 
+Serve-port default behavior:
+- listener mode defaults to `80` (or `443` when `use-https=true`)
+- service mode defaults to the target port argument (for example `portal 8080 --listen-mode service` defaults to `serve-port=8080`), unless `--serve-port` is explicitly set
+
 ## Key Mode Flags
 
 | Purpose | CLI | Env | Default |
@@ -49,6 +53,7 @@ no-tui: false
 
 Hard rule:
 - `--listen-mode service` cannot be combined with `--funnel`.
+- `--listen-mode service` requires a tag-based host identity. Startup fails if the node has no `tag:*` identity.
 
 Naming note:
 - Canonical naming is backend-agnostic: `device-name`, `listen-mode`, and `service-name`.

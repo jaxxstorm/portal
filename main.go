@@ -189,6 +189,7 @@ func main() {
 		FunnelEnabled:   cfg.Funnel,
 		FunnelAllowlist: cfg.FunnelAllowlist,
 		PreferRemoteIP:  effectiveFunnelProxyProtocol,
+		InitialEndpoint: initialEndpointState(cfg, useLocalTailscale),
 	}
 
 	proxyServer := proxy.NewServer(proxyConfig)
@@ -208,6 +209,7 @@ func runWithoutTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bo
 	logger.Info(logging.MsgConsoleMode,
 		logging.TUIEnabled(false),
 	)
+	proxyServer.SetEndpointState(initialEndpointState(cfg, useLocalTailscale))
 
 	// Set up servers
 	var cleanup func() error
@@ -217,18 +219,22 @@ func runWithoutTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bo
 	if useLocalTailscale {
 		cleanup, uiCleanup, serviceInfo = setupLocalTailscale(ctx, tsClient, proxyServer, logger, cfg)
 		if serviceInfo != nil {
-			logStartupSummary(logger, startup.BuildReadySummary(
+			summary := startup.BuildReadySummary(
 				cfg,
 				true,
 				serviceInfo.URL,
 				serviceInfo.LocalURL,
 				proxyServer.GetWebUIURL(),
 				startup.TSNetDetails{},
-			))
+			)
+			proxyServer.SetEndpointState(summary.EndpointState())
+			logStartupSummary(logger, summary)
+		} else {
+			proxyServer.MarkEndpointFailure("tailscale serve setup failed")
 		}
 	} else {
 		cleanup = setupTsnet(ctx, proxyServer, logger, cfg, func(readyInfo tailscale.TSNetReadyInfo) {
-			logStartupSummary(logger, startup.BuildReadySummary(
+			summary := startup.BuildReadySummary(
 				cfg,
 				false,
 				readyInfo.ServiceURL,
@@ -240,7 +246,9 @@ func runWithoutTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bo
 					ServiceName:          readyInfo.ServiceName,
 					ServiceFQDN:          readyInfo.ServiceFQDN,
 				},
-			))
+			)
+			proxyServer.SetEndpointState(summary.EndpointState())
+			logStartupSummary(logger, summary)
 		})
 	}
 
@@ -280,6 +288,7 @@ func runWithoutTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bo
 
 func runWithTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bool, tsClient *tailscale.Client, proxyServer *proxy.Server, cfg *config.Config) {
 	// TUI MODE - Initialize TUI with proper message routing
+	proxyServer.SetEndpointState(initialEndpointState(cfg, useLocalTailscale))
 
 	// Create TUI program
 	tuiModel := tui.NewModel(proxyServer)
@@ -340,18 +349,22 @@ func runWithTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bool,
 			var serviceInfo *tailscale.ServiceInfo
 			cleanup, uiCleanup, serviceInfo = server.SetupLocalTailscaleQuiet(ctx, tuiTsClient, proxyServer, tuiOnlyLogger, cfg, uiFiles)
 			if serviceInfo != nil {
-				logStartupSummaryToTUI(tuiOnlyLogger, startup.BuildReadySummary(
+				summary := startup.BuildReadySummary(
 					cfg,
 					true,
 					serviceInfo.URL,
 					serviceInfo.LocalURL,
 					proxyServer.GetWebUIURL(),
 					startup.TSNetDetails{},
-				))
+				)
+				proxyServer.SetEndpointState(summary.EndpointState())
+				logStartupSummaryToTUI(tuiOnlyLogger, summary)
+			} else {
+				proxyServer.MarkEndpointFailure("tailscale serve setup failed")
 			}
 		} else {
 			cleanup = server.SetupTsnetQuiet(ctx, proxyServer, tuiOnlyLogger, cfg, func(readyInfo tailscale.TSNetReadyInfo) {
-				logStartupSummaryToTUI(tuiOnlyLogger, startup.BuildReadySummary(
+				summary := startup.BuildReadySummary(
 					cfg,
 					false,
 					readyInfo.ServiceURL,
@@ -363,7 +376,9 @@ func runWithTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bool,
 						ServiceName:          readyInfo.ServiceName,
 						ServiceFQDN:          readyInfo.ServiceFQDN,
 					},
-				))
+				)
+				proxyServer.SetEndpointState(summary.EndpointState())
+				logStartupSummaryToTUI(tuiOnlyLogger, summary)
 			})
 		}
 	}()
@@ -390,6 +405,15 @@ func runWithTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bool,
 }
 
 func setupLocalTailscale(ctx context.Context, tsClient *tailscale.Client, proxyServer *proxy.Server, logger *zap.Logger, cfg *config.Config) (cleanup func() error, uiCleanup func() error, serviceInfo *tailscale.ServiceInfo) {
+	if cfg.IsServiceMode() {
+		if err := tsClient.ValidateServiceHostIdentity(ctx, cfg.TSNetServiceName); err != nil {
+			logger.Fatal(logging.MsgSetupFailed,
+				logging.Component("tailscale_serve"),
+				logging.Error(err),
+			)
+		}
+	}
+
 	// Find an available port for our local proxy server using random allocation
 	logger.Info("Allocating random proxy port",
 		logging.Component("proxy_server"),
@@ -714,6 +738,28 @@ func logStartupSummaryToTUI(logger *tui.TUIOnlyLogger, summary startup.Summary) 
 		return
 	}
 	logger.Info(logging.MsgStartupReady, summary.Fields()...)
+}
+
+func initialEndpointState(cfg *config.Config, useLocalDaemon bool) model.EndpointState {
+	mode := startup.ModeTSNet
+	if useLocalDaemon {
+		mode = startup.ModeLocalDaemon
+	}
+
+	exposure := startup.ExposureTailnet
+	if cfg.Funnel {
+		exposure = startup.ExposureFunnel
+	}
+
+	return model.EndpointState{
+		Readiness:   model.EndpointReadinessStarting,
+		Mode:        mode,
+		Exposure:    exposure,
+		ServiceURL:  "",
+		WebUIStatus: startup.ResolveWebUIStatus(cfg.NoUI, ""),
+		WebUIURL:    "",
+		WebUIReason: startup.ResolveWebUIReason(cfg.NoUI, useLocalDaemon, ""),
+	}
 }
 
 func setupUIServer(ctx context.Context, tsClient *tailscale.Client, uiPort int, proxyServer *proxy.Server, logger *zap.Logger) (*model.UIServerInfo, error) {
