@@ -4,7 +4,7 @@ context: |
   Tech stack: Go CLI application.
   Core libraries: Kong (CLI parsing), Zap (structured logging), Bubble Tea/Lipgloss (TUI), Tailscale client + tsnet.
   Domain: local service sharing for development and webhook testing.
-  Positioning: tgate is "local developer access over Tailscale."
+  Positioning: portal is "local developer access over Tailscale."
   Primary product capabilities:
   - Proxy local developer services to a user's tailnet (private by default).
   - Optionally proxy local developer services to the public internet using Tailscale Funnel.
@@ -16,7 +16,7 @@ context: |
 rules:
   proposal:
     - Clearly separate tailnet-private behavior from Funnel-public behavior.
-    - Include concrete examples for `tgate <port>` and `tgate <port> --funnel`.
+    - Include concrete examples for `portal <port>` and `portal <port> --funnel`.
     - Call out security and prerequisite implications whenever Funnel is introduced.
   specs:
     - Use normative language (MUST/SHOULD/MAY) for behavior requirements.

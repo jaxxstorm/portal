@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/jaxxstorm/tgate/internal/logging"
+	"github.com/jaxxstorm/portal/internal/logging"
 )
 
 // TUIOnlyLogger sends all log messages to TUI instead of console

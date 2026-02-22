@@ -7,7 +7,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/jaxxstorm/tgate/internal/logging"
+	"github.com/jaxxstorm/portal/internal/logging"
 )
 
 func newTSNetRuntimeLogAdapter(logger *zap.Logger, nodeName string) func(format string, args ...any) {

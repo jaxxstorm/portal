@@ -102,13 +102,13 @@ func ParseArgs(args []string) (*Config, error) {
 	}
 
 	if deviceName == "" {
-		deviceName = "tgate"
+		deviceName = "portal"
 	}
 	if listenMode == "" {
 		listenMode = TSNetListenModeListener
 	}
 	if serviceName == "" {
-		serviceName = "svc:tgate"
+		serviceName = "svc:portal"
 	}
 
 	funnelAllowlist, err := parseFunnelAllowlist(normalizeList(v.Get("funnel-allowlist")))
@@ -173,13 +173,7 @@ func ParseArgs(args []string) (*Config, error) {
 
 // applyAutoConfiguration applies automatic configuration rules
 func (c *Config) applyAutoConfiguration() {
-	// Auto-enable funnel for mock mode unless explicitly disabled
-	if c.Mock && !c.Funnel {
-		c.Funnel = true
-		c.UseHTTPS = true
-	}
-
-	// If funnel is enabled, automatically enable HTTPS since funnel requires it
+	// If funnel is enabled, automatically enable HTTPS since funnel requires it.
 	if c.Funnel {
 		c.UseHTTPS = true
 	}
@@ -226,7 +220,7 @@ func (c *Config) EffectiveTSNetListenMode() string {
 	return mode
 }
 
-const usageSuffix = "\nUsage: tgate <port> [flags]     (proxy mode)\n       tgate --mock [flags]     (mock/testing mode)\n       tgate --version\n       tgate --cleanup-serve"
+const usageSuffix = "\nUsage: portal <port> [flags]     (proxy mode)\n       portal --mock [flags]     (mock/testing mode)\n       portal --version\n       portal --cleanup-serve"
 
 type parseState struct {
 	port    int
@@ -239,10 +233,10 @@ func configureViper(v *viper.Viper) error {
 		return fmt.Errorf("failed to determine home directory: %w", err)
 	}
 
-	configPath := filepath.Join(homeDir, ".tgate", "config.yml")
+	configPath := filepath.Join(homeDir, ".portal", "config.yml")
 	v.SetConfigFile(configPath)
 	v.SetConfigType("yaml")
-	v.SetEnvPrefix("TGATE")
+	v.SetEnvPrefix("PORTAL")
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 	v.AutomaticEnv()
 	v.SetDefault("funnel-allowlist", []string{})
@@ -262,7 +256,7 @@ func configureViper(v *viper.Viper) error {
 
 func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 	cmd := &cobra.Command{
-		Use:   "tgate [port]",
+		Use:   "portal [port]",
 		Short: "Expose local services over Tailscale",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -282,7 +276,7 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 	}
 
 	flags := cmd.Flags()
-	flags.StringP(deviceNameKey, "n", "", "Tailscale device name (only used with tsnet mode) (default: tgate)")
+	flags.StringP(deviceNameKey, "n", "", "Tailscale device name (only used with tsnet mode) (default: portal)")
 	flags.String(legacyTailscaleNameKey, "", "Deprecated alias for --device-name")
 	flags.BoolP("funnel", "f", false, "Enable Tailscale funnel (public internet access)")
 	flags.BoolP("verbose", "v", false, "Enable verbose logging")
@@ -297,10 +291,10 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 	flags.Bool("no-ui", false, "Disable web UI dashboard")
 	flags.Int("ui-port", 0, "Custom port for web UI (default: 4040 or next available)")
 	flags.Bool("version", false, "Show version information")
-	flags.BoolP("mock", "m", false, "Enable mock/testing mode (no backing server required, enables funnel by default)")
+	flags.BoolP("mock", "m", false, "Enable mock/testing mode (no backing server required)")
 	flags.Bool("cleanup-serve", false, "Clear all Tailscale serve configurations and exit")
 	flags.String(listenModeKey, "", "Listen mode: listener or service (default: listener)")
-	flags.String(serviceNameKey, "", "Service name used when listen-mode=service (default: svc:tgate)")
+	flags.String(serviceNameKey, "", "Service name used when listen-mode=service (default: svc:portal)")
 	flags.String(legacyListenModeKey, "", "Deprecated alias for --listen-mode")
 	flags.String(legacyServiceNameKey, "", "Deprecated alias for --service-name")
 	_ = flags.MarkDeprecated(legacyTailscaleNameKey, "use --device-name instead")

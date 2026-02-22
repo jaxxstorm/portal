@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaxxstorm/tgate/internal/model"
+	"github.com/jaxxstorm/portal/internal/model"
 )
 
 type stubLogProvider struct {
@@ -50,8 +50,8 @@ func TestHandleAPIOptionsIncludesDeleteAndSameOrigin(t *testing.T) {
 	srv := testServerWithUIFiles(t, nil)
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/requests", nil)
-	req.Host = "tgate.example.ts.net:8443"
-	req.Header.Set("Origin", "http://tgate.example.ts.net:8443")
+	req.Host = "portal.example.ts.net:8443"
+	req.Header.Set("Origin", "http://portal.example.ts.net:8443")
 	rr := httptest.NewRecorder()
 
 	srv.ServeHTTP(rr, req)
@@ -62,7 +62,7 @@ func TestHandleAPIOptionsIncludesDeleteAndSameOrigin(t *testing.T) {
 	if got := rr.Header().Get("Access-Control-Allow-Methods"); got != "GET, POST, DELETE, OPTIONS" {
 		t.Fatalf("unexpected allow methods: %q", got)
 	}
-	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "http://tgate.example.ts.net:8443" {
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "http://portal.example.ts.net:8443" {
 		t.Fatalf("unexpected allow origin: %q", got)
 	}
 }
@@ -71,7 +71,7 @@ func TestHandleAPIDoesNotAllowCrossOrigin(t *testing.T) {
 	srv := testServerWithUIFiles(t, nil)
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/requests", nil)
-	req.Host = "tgate.example.ts.net"
+	req.Host = "portal.example.ts.net"
 	req.Header.Set("Origin", "http://other.example.ts.net")
 	rr := httptest.NewRecorder()
 

@@ -1,6 +1,6 @@
-# tgate
+# portal
 
-tgate is an HTTP proxy and testing tool for exposing local services over
+portal is an HTTP proxy and testing tool for exposing local services over
 Tailscale. It is private by default (tailnet-only) and can be made public with
 explicit Funnel opt-in.
 
@@ -10,29 +10,32 @@ explicit Funnel opt-in.
 
 ```bash
 brew tap jaxxstorm/tap
-brew install tgate
+brew install portal
 ```
 
 ### From Source
 
 ```bash
-git clone https://github.com/jaxxstorm/tgate.git
-cd tgate
+git clone https://github.com/jaxxstorm/portal.git
+cd portal
 go mod tidy
-go build -o tgate main.go
+go build -o portal main.go
 ```
 
 ## Quick Start
 
 ```bash
 # Tailnet-only proxy to local service
-tgate 8080
+portal 8080
 
 # Public internet access with Funnel
-tgate 8080 --funnel
+portal 8080 --funnel
 
-# Mock endpoint for webhook testing
-tgate --mock
+# Mock endpoint for webhook testing (tailnet-only by default)
+portal --mock
+
+# Mock endpoint with explicit public Funnel exposure
+portal --mock --funnel
 ```
 
 ## Documentation

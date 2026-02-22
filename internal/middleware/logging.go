@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jaxxstorm/tgate/internal/model"
+	"github.com/jaxxstorm/portal/internal/model"
 )
 
 // LoggingResponseWriter wraps http.ResponseWriter to capture response information

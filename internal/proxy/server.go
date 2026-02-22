@@ -19,9 +19,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"go.uber.org/zap"
 
-	"github.com/jaxxstorm/tgate/internal/logging"
-	"github.com/jaxxstorm/tgate/internal/model"
-	"github.com/jaxxstorm/tgate/internal/stats"
+	"github.com/jaxxstorm/portal/internal/logging"
+	"github.com/jaxxstorm/portal/internal/model"
+	"github.com/jaxxstorm/portal/internal/stats"
 )
 
 // LoggingResponseWriter wraps http.ResponseWriter to capture response information
@@ -373,8 +373,8 @@ func (s *Server) captureRequest(logEntry model.RequestLog) {
 func (s *Server) handleMockRequest(w http.ResponseWriter, r *http.Request, body string) {
 	// Set response headers
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-tgate-mode", "mock")
-	w.Header().Set("X-tgate-timestamp", time.Now().UTC().Format(time.RFC3339))
+	w.Header().Set("X-portal-mode", "mock")
+	w.Header().Set("X-portal-timestamp", time.Now().UTC().Format(time.RFC3339))
 
 	// Create a simple response
 	response := map[string]interface{}{

@@ -3,7 +3,7 @@
 ## Basic Checks
 
 ```bash
-tgate --version
+portal --version
 tailscale status
 ```
 
@@ -13,27 +13,27 @@ Verify your local target service:
 
 ```bash
 curl localhost:8080
-tgate 8080 --verbose
+portal 8080 --verbose
 ```
 
 If `--funnel` is not set, access remains tailnet-only.
 
 ## Tailscale And TSNet Log Location
 
-Tailscale and tsnet lifecycle logs are emitted through tgate's main logger:
+Tailscale and tsnet lifecycle logs are emitted through portal's main logger:
 - In TUI mode: the **Application Logs** panel
-- In non-TUI mode: standard tgate console log output
+- In non-TUI mode: standard portal console log output
 
 If you are debugging startup, certificate, or Funnel setup issues, use:
 
 ```bash
-tgate 8080 --verbose
+portal 8080 --verbose
 ```
 
 or in TUI mode:
 
 ```bash
-tgate 8080
+portal 8080
 ```
 
 Healthy startup should include a definitive `Startup ready` log entry. If that
@@ -49,7 +49,7 @@ For public access (`--funnel`), verify prerequisites:
 Useful command:
 
 ```bash
-tgate 8080 --funnel --verbose
+portal 8080 --funnel --verbose
 ```
 
 ## Service Mode + Funnel Conflict
@@ -57,7 +57,7 @@ tgate 8080 --funnel --verbose
 This combination is invalid:
 
 ```bash
-tgate 8080 --listen-mode service --funnel
+portal 8080 --listen-mode service --funnel
 ```
 
 Service mode and Funnel are mutually exclusive. Use one:
@@ -74,7 +74,7 @@ If Funnel allowlist is configured, requests are denied when:
 Verify configuration:
 
 ```bash
-echo "$TGATE_FUNNEL_ALLOWLIST"
+echo "$PORTAL_FUNNEL_ALLOWLIST"
 ```
 
 Example config file key:
@@ -85,7 +85,7 @@ funnel-allowlist:
   - 198.51.100.0/24
 ```
 
-If you set a non-root `set-path` (for example `/api`), tgate cannot use the
+If you set a non-root `set-path` (for example `/api`), portal cannot use the
 Funnel TCP+PROXY mode and falls back to trusted HTTP source metadata.
 
 For full configuration and behavior details, see
@@ -96,17 +96,17 @@ For full configuration and behavior details, see
 Use console mode:
 
 ```bash
-tgate 8080 --no-tui --verbose
+portal 8080 --no-tui --verbose
 ```
 
 ## Reset Serve State
 
 ```bash
-tgate --cleanup-serve
+portal --cleanup-serve
 ```
 
 Then retry with a minimal configuration:
 
 ```bash
-tgate 8080
+portal 8080
 ```

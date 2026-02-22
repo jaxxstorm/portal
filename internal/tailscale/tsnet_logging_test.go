@@ -12,7 +12,7 @@ func TestTSNetRuntimeLogsUsePrimaryLoggerWithStructuredContext(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	logger := zap.New(core)
 
-	server := NewTSNetServer(TSNetConfig{Hostname: "tgate"}, logger)
+	server := NewTSNetServer(TSNetConfig{Hostname: "portal"}, logger)
 	observed.TakeAll() // Drop construction log.
 
 	server.server.Logf("AuthLoop: state is Running; done")
@@ -33,7 +33,7 @@ func TestTSNetRuntimeLogsUsePrimaryLoggerWithStructuredContext(t *testing.T) {
 	fields := entry.ContextMap()
 	assertStringField(t, fields, "component", "tsnet_runtime")
 	assertStringField(t, fields, "tailscale_mode", "tsnet")
-	assertStringField(t, fields, "node_name", "tgate")
+	assertStringField(t, fields, "node_name", "portal")
 	assertStringField(t, fields, "phase", "auth")
 }
 
@@ -41,7 +41,7 @@ func TestTSNetRuntimeLogLevelAndPhaseMapping(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	logger := zap.New(core)
 
-	server := NewTSNetServer(TSNetConfig{Hostname: "tgate"}, logger)
+	server := NewTSNetServer(TSNetConfig{Hostname: "portal"}, logger)
 	observed.TakeAll() // Drop construction log.
 
 	server.server.Logf("Authkey is set; but state is NoState. Ignoring authkey.")
@@ -67,7 +67,7 @@ func TestTSNetRuntimeLogAdapterSkipsEmptyMessages(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	logger := zap.New(core)
 
-	server := NewTSNetServer(TSNetConfig{Hostname: "tgate"}, logger)
+	server := NewTSNetServer(TSNetConfig{Hostname: "portal"}, logger)
 	observed.TakeAll() // Drop construction log.
 
 	server.server.Logf("   ")
@@ -81,7 +81,7 @@ func TestTSNetRuntimeInfoLogsSuppressedWithoutVerbose(t *testing.T) {
 	core, observed := observer.New(zapcore.InfoLevel)
 	logger := zap.New(core)
 
-	server := NewTSNetServer(TSNetConfig{Hostname: "tgate"}, logger)
+	server := NewTSNetServer(TSNetConfig{Hostname: "portal"}, logger)
 	observed.TakeAll() // Drop construction log.
 
 	server.server.Logf("wgengine: Reconfig: configuring userspace WireGuard config")
@@ -95,7 +95,7 @@ func TestTSNetRuntimeWarnAndErrorLogsSuppressedWithoutVerbose(t *testing.T) {
 	core, observed := observer.New(zapcore.InfoLevel)
 	logger := zap.New(core)
 
-	server := NewTSNetServer(TSNetConfig{Hostname: "tgate"}, logger)
+	server := NewTSNetServer(TSNetConfig{Hostname: "portal"}, logger)
 	observed.TakeAll() // Drop construction log.
 
 	server.server.Logf("Authkey is set; but state is NoState. Ignoring authkey.")
@@ -110,7 +110,7 @@ func TestTSNetUserLogsUseAdapterAndDoNotLeak(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	logger := zap.New(core)
 
-	server := NewTSNetServer(TSNetConfig{Hostname: "tgate"}, logger)
+	server := NewTSNetServer(TSNetConfig{Hostname: "portal"}, logger)
 	observed.TakeAll() // Drop construction log.
 
 	if server.server.UserLogf == nil {

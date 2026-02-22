@@ -3,7 +3,7 @@ package startup
 import (
 	"testing"
 
-	"github.com/jaxxstorm/tgate/internal/config"
+	"github.com/jaxxstorm/portal/internal/config"
 )
 
 func TestBuildReadySummaryTailnetIncludesWebUI(t *testing.T) {
@@ -21,6 +21,9 @@ func TestBuildReadySummaryTailnetIncludesWebUI(t *testing.T) {
 	}
 	if got, want := summary.Mode, ModeLocalDaemon; got != want {
 		t.Fatalf("unexpected mode: got %q want %q", got, want)
+	}
+	if got, want := summary.BackendMode, BackendModeProxy; got != want {
+		t.Fatalf("unexpected backend mode: got %q want %q", got, want)
 	}
 	if got, want := summary.Exposure, ExposureTailnet; got != want {
 		t.Fatalf("unexpected exposure: got %q want %q", got, want)
@@ -49,6 +52,9 @@ func TestBuildReadySummaryFunnelMode(t *testing.T) {
 	})
 	if got, want := summary.Mode, ModeTSNet; got != want {
 		t.Fatalf("unexpected mode: got %q want %q", got, want)
+	}
+	if got, want := summary.BackendMode, BackendModeMock; got != want {
+		t.Fatalf("unexpected backend mode: got %q want %q", got, want)
 	}
 	if got, want := summary.Exposure, ExposureFunnel; got != want {
 		t.Fatalf("unexpected exposure: got %q want %q", got, want)
@@ -116,6 +122,7 @@ func TestSummaryFieldsExposeStableKeys(t *testing.T) {
 	required := []string{
 		"readiness",
 		"mode",
+		"backend_mode",
 		"exposure",
 		"service_url",
 		"web_ui_status",
@@ -130,6 +137,21 @@ func TestSummaryFieldsExposeStableKeys(t *testing.T) {
 		if !keys[key] {
 			t.Fatalf("expected field key %q to be present", key)
 		}
+	}
+}
+
+func TestBuildReadySummaryMockTailnetMode(t *testing.T) {
+	cfg := &config.Config{
+		Mock:   true,
+		Funnel: false,
+	}
+
+	summary := BuildReadySummary(cfg, true, "https://node.ts.net", "", "", TSNetDetails{})
+	if got, want := summary.BackendMode, BackendModeMock; got != want {
+		t.Fatalf("unexpected backend mode: got %q want %q", got, want)
+	}
+	if got, want := summary.Exposure, ExposureTailnet; got != want {
+		t.Fatalf("unexpected exposure: got %q want %q", got, want)
 	}
 }
 
@@ -165,14 +187,14 @@ func TestSummaryFieldsIncludeTSNetModeFields(t *testing.T) {
 	cfg := &config.Config{
 		NoUI:             true,
 		TSNetListenMode:  config.TSNetListenModeService,
-		TSNetServiceName: "svc:tgate",
+		TSNetServiceName: "svc:portal",
 	}
 
-	summary := BuildReadySummary(cfg, false, "https://tgate.tail4cf751.ts.net", "", "", TSNetDetails{
+	summary := BuildReadySummary(cfg, false, "https://portal.tail4cf751.ts.net", "", "", TSNetDetails{
 		ConfiguredListenMode: config.TSNetListenModeService,
 		EffectiveListenMode:  config.TSNetListenModeService,
-		ServiceName:          "svc:tgate",
-		ServiceFQDN:          "tgate.tail4cf751.ts.net",
+		ServiceName:          "svc:portal",
+		ServiceFQDN:          "portal.tail4cf751.ts.net",
 	})
 	fields := summary.Fields()
 	keys := make(map[string]bool, len(fields))

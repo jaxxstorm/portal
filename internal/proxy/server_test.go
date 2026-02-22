@@ -11,7 +11,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/jaxxstorm/tgate/internal/model"
+	"github.com/jaxxstorm/portal/internal/model"
 )
 
 func TestServeHTTPTailnetModeIgnoresFunnelAllowlist(t *testing.T) {

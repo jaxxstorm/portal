@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jaxxstorm/tgate/internal/config"
-	"github.com/jaxxstorm/tgate/internal/httputil"
-	"github.com/jaxxstorm/tgate/internal/model"
-	"github.com/jaxxstorm/tgate/internal/proxy"
-	"github.com/jaxxstorm/tgate/internal/tailscale"
-	"github.com/jaxxstorm/tgate/internal/tui"
-	"github.com/jaxxstorm/tgate/internal/ui"
+	"github.com/jaxxstorm/portal/internal/config"
+	"github.com/jaxxstorm/portal/internal/httputil"
+	"github.com/jaxxstorm/portal/internal/model"
+	"github.com/jaxxstorm/portal/internal/proxy"
+	"github.com/jaxxstorm/portal/internal/tailscale"
+	"github.com/jaxxstorm/portal/internal/tui"
+	"github.com/jaxxstorm/portal/internal/ui"
 )
 
 // SetupLocalTailscaleQuiet sets up Tailscale serve with minimal TUI logging

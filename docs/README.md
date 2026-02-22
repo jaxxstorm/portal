@@ -1,6 +1,6 @@
-# tgate Documentation
+# portal Documentation
 
-tgate exposes local development services over Tailscale, with private-by-default
+portal exposes local development services over Tailscale, with private-by-default
 tailnet access and optional public access through Tailscale Funnel.
 
 ## Start Here

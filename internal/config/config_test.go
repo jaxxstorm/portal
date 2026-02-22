@@ -13,7 +13,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	homeDir, err := os.MkdirTemp("", "tgate-config-test-home-*")
+	homeDir, err := os.MkdirTemp("", "portal-config-test-home-*")
 	if err != nil {
 		panic(err)
 	}
@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 
 	for _, entry := range os.Environ() {
 		key, _, found := strings.Cut(entry, "=")
-		if found && strings.HasPrefix(key, "TGATE_") {
+		if found && strings.HasPrefix(key, "PORTAL_") {
 			_ = os.Unsetenv(key)
 		}
 	}
@@ -58,11 +58,68 @@ func TestParseArgsMockCLICompatibility(t *testing.T) {
 	if !cfg.Mock {
 		t.Fatalf("expected mock true")
 	}
+	if cfg.Funnel {
+		t.Fatalf("expected funnel false by default in mock mode")
+	}
+	if cfg.UseHTTPS {
+		t.Fatalf("expected use https false by default in mock mode")
+	}
+}
+
+func TestParseArgsMockWithExplicitFunnelCLI(t *testing.T) {
+	cfg, err := ParseArgs([]string{"--mock", "--funnel"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if !cfg.Mock {
+		t.Fatalf("expected mock true")
+	}
 	if !cfg.Funnel {
-		t.Fatalf("expected funnel true in mock mode")
+		t.Fatalf("expected funnel true when explicitly enabled in mock mode")
 	}
 	if !cfg.UseHTTPS {
-		t.Fatalf("expected use https true in mock mode")
+		t.Fatalf("expected use https true when funnel is enabled")
+	}
+}
+
+func TestParseArgsMockAndFunnelResolvedIndependentlyFromEnv(t *testing.T) {
+	t.Setenv("PORTAL_MOCK", "true")
+	t.Setenv("PORTAL_FUNNEL", "false")
+
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if !cfg.Mock {
+		t.Fatalf("expected mock true from env")
+	}
+	if cfg.Funnel {
+		t.Fatalf("expected funnel false from env when explicitly disabled")
+	}
+	if cfg.UseHTTPS {
+		t.Fatalf("expected use https false without funnel")
+	}
+}
+
+func TestParseArgsMockWithExplicitFunnelFromEnv(t *testing.T) {
+	t.Setenv("PORTAL_MOCK", "true")
+	t.Setenv("PORTAL_FUNNEL", "true")
+
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if !cfg.Mock {
+		t.Fatalf("expected mock true from env")
+	}
+	if !cfg.Funnel {
+		t.Fatalf("expected funnel true from env")
+	}
+	if !cfg.UseHTTPS {
+		t.Fatalf("expected use https true when funnel is enabled")
 	}
 }
 
@@ -123,11 +180,11 @@ funnel-allowlist:
 }
 
 func TestParseArgsBindsEnvironmentVariables(t *testing.T) {
-	t.Setenv("TGATE_PORT", "7070")
-	t.Setenv("TGATE_FUNNEL", "true")
-	t.Setenv("TGATE_FUNNEL_ALLOWLIST", "203.0.113.10, 198.51.100.0/24")
-	t.Setenv("TGATE_VERBOSE", "true")
-	t.Setenv("TGATE_NO_TUI", "true")
+	t.Setenv("PORTAL_PORT", "7070")
+	t.Setenv("PORTAL_FUNNEL", "true")
+	t.Setenv("PORTAL_FUNNEL_ALLOWLIST", "203.0.113.10, 198.51.100.0/24")
+	t.Setenv("PORTAL_VERBOSE", "true")
+	t.Setenv("PORTAL_NO_TUI", "true")
 
 	cfg, err := ParseArgs([]string{})
 	if err != nil {
@@ -161,9 +218,9 @@ funnel: false
 funnel-allowlist:
   - 203.0.113.10
 `)
-	t.Setenv("TGATE_SERVE_PORT", "443")
-	t.Setenv("TGATE_FUNNEL", "true")
-	t.Setenv("TGATE_FUNNEL_ALLOWLIST", "198.51.100.0/24,192.0.2.25")
+	t.Setenv("PORTAL_SERVE_PORT", "443")
+	t.Setenv("PORTAL_FUNNEL", "true")
+	t.Setenv("PORTAL_FUNNEL_ALLOWLIST", "198.51.100.0/24,192.0.2.25")
 
 	cfg, err := ParseArgs([]string{"8080", "--serve-port", "8443"})
 	if err != nil {
@@ -189,7 +246,7 @@ func TestParseArgsDeviceNameDefaultsToTgate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got, want := cfg.TailscaleName, "tgate"; got != want {
+	if got, want := cfg.TailscaleName, "portal"; got != want {
 		t.Fatalf("expected default device name %q, got %q", want, got)
 	}
 }
@@ -201,7 +258,7 @@ func TestParseArgsDeviceNamePrecedenceCLIOverEnvOverConfig(t *testing.T) {
 port: 9000
 device-name: cfg-device
 `)
-	t.Setenv("TGATE_DEVICE_NAME", "env-device")
+	t.Setenv("PORTAL_DEVICE_NAME", "env-device")
 
 	cfg, err := ParseArgs([]string{"8080", "--device-name", "cli-device"})
 	if err != nil {
@@ -213,8 +270,8 @@ device-name: cfg-device
 }
 
 func TestParseArgsSupportsLegacyTailscaleName(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_TAILSCALE_NAME", "legacy-node")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_TAILSCALE_NAME", "legacy-node")
 
 	cfg, err := ParseArgs([]string{})
 	if err != nil {
@@ -226,9 +283,9 @@ func TestParseArgsSupportsLegacyTailscaleName(t *testing.T) {
 }
 
 func TestParseArgsRejectsConflictingDeviceAndLegacyTailscaleName(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_DEVICE_NAME", "device-node")
-	t.Setenv("TGATE_TAILSCALE_NAME", "legacy-node")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_DEVICE_NAME", "device-node")
+	t.Setenv("PORTAL_TAILSCALE_NAME", "legacy-node")
 
 	_, err := ParseArgs([]string{})
 	if err == nil {
@@ -248,7 +305,7 @@ func TestParseArgsTSNetListenModeDefaults(t *testing.T) {
 	if got, want := cfg.TSNetListenMode, TSNetListenModeListener; got != want {
 		t.Fatalf("expected default tsnet listen mode %q, got %q", want, got)
 	}
-	if got, want := cfg.TSNetServiceName, "svc:tgate"; got != want {
+	if got, want := cfg.TSNetServiceName, "svc:portal"; got != want {
 		t.Fatalf("expected default tsnet service name %q, got %q", want, got)
 	}
 }
@@ -261,8 +318,8 @@ port: 9000
 listen-mode: listener
 service-name: svc:cfg
 `)
-	t.Setenv("TGATE_LISTEN_MODE", "service")
-	t.Setenv("TGATE_SERVICE_NAME", "svc:env")
+	t.Setenv("PORTAL_LISTEN_MODE", "service")
+	t.Setenv("PORTAL_SERVICE_NAME", "svc:env")
 
 	cfg, err := ParseArgs([]string{"8080", "--listen-mode", "listener", "--service-name", "svc:cli"})
 	if err != nil {
@@ -278,9 +335,9 @@ service-name: svc:cfg
 }
 
 func TestParseArgsTSNetServiceModeFromEnvironment(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_LISTEN_MODE", "service")
-	t.Setenv("TGATE_SERVICE_NAME", "svc:from-env")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_LISTEN_MODE", "service")
+	t.Setenv("PORTAL_SERVICE_NAME", "svc:from-env")
 
 	cfg, err := ParseArgs([]string{})
 	if err != nil {
@@ -296,9 +353,9 @@ func TestParseArgsTSNetServiceModeFromEnvironment(t *testing.T) {
 }
 
 func TestParseArgsSupportsLegacyTSNetModeNames(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_TSNET_LISTEN_MODE", "service")
-	t.Setenv("TGATE_TSNET_SERVICE_NAME", "svc:legacy")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_TSNET_LISTEN_MODE", "service")
+	t.Setenv("PORTAL_TSNET_SERVICE_NAME", "svc:legacy")
 
 	cfg, err := ParseArgs([]string{})
 	if err != nil {
@@ -334,8 +391,8 @@ tsnet-service-name: svc:legacy-config
 }
 
 func TestParseArgsRejectsInvalidTSNetListenMode(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_LISTEN_MODE", "bogus")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_LISTEN_MODE", "bogus")
 
 	_, err := ParseArgs([]string{})
 	if err == nil {
@@ -347,9 +404,9 @@ func TestParseArgsRejectsInvalidTSNetListenMode(t *testing.T) {
 }
 
 func TestParseArgsRejectsInvalidTSNetServiceName(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_LISTEN_MODE", "service")
-	t.Setenv("TGATE_SERVICE_NAME", "not-a-service")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_LISTEN_MODE", "service")
+	t.Setenv("PORTAL_SERVICE_NAME", "not-a-service")
 
 	_, err := ParseArgs([]string{})
 	if err == nil {
@@ -361,9 +418,9 @@ func TestParseArgsRejectsInvalidTSNetServiceName(t *testing.T) {
 }
 
 func TestParseArgsRejectsServiceModeWithFunnel(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_LISTEN_MODE", "service")
-	t.Setenv("TGATE_FUNNEL", "true")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_LISTEN_MODE", "service")
+	t.Setenv("PORTAL_FUNNEL", "true")
 
 	_, err := ParseArgs([]string{})
 	if err == nil {
@@ -375,9 +432,9 @@ func TestParseArgsRejectsServiceModeWithFunnel(t *testing.T) {
 }
 
 func TestParseArgsRejectsConflictingCanonicalAndLegacyListenMode(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_LISTEN_MODE", "listener")
-	t.Setenv("TGATE_TSNET_LISTEN_MODE", "service")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_LISTEN_MODE", "listener")
+	t.Setenv("PORTAL_TSNET_LISTEN_MODE", "service")
 
 	_, err := ParseArgs([]string{})
 	if err == nil {
@@ -389,10 +446,10 @@ func TestParseArgsRejectsConflictingCanonicalAndLegacyListenMode(t *testing.T) {
 }
 
 func TestParseArgsRejectsConflictingCanonicalAndLegacyServiceName(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_LISTEN_MODE", "service")
-	t.Setenv("TGATE_SERVICE_NAME", "svc:canonical")
-	t.Setenv("TGATE_TSNET_SERVICE_NAME", "svc:legacy")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_LISTEN_MODE", "service")
+	t.Setenv("PORTAL_SERVICE_NAME", "svc:canonical")
+	t.Setenv("PORTAL_TSNET_SERVICE_NAME", "svc:legacy")
 
 	_, err := ParseArgs([]string{})
 	if err == nil {
@@ -424,9 +481,9 @@ port: 8081
 }
 
 func TestUseFunnelProxyProtocolEnabledForRootPathAllowlist(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_FUNNEL", "true")
-	t.Setenv("TGATE_FUNNEL_ALLOWLIST", "203.0.113.10")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_FUNNEL", "true")
+	t.Setenv("PORTAL_FUNNEL_ALLOWLIST", "203.0.113.10")
 
 	cfg, err := ParseArgs([]string{})
 	if err != nil {
@@ -439,10 +496,10 @@ func TestUseFunnelProxyProtocolEnabledForRootPathAllowlist(t *testing.T) {
 }
 
 func TestUseFunnelProxyProtocolDisabledForNonRootSetPath(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_FUNNEL", "true")
-	t.Setenv("TGATE_FUNNEL_ALLOWLIST", "203.0.113.10")
-	t.Setenv("TGATE_SET_PATH", "/api")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_FUNNEL", "true")
+	t.Setenv("PORTAL_FUNNEL_ALLOWLIST", "203.0.113.10")
+	t.Setenv("PORTAL_SET_PATH", "/api")
 
 	cfg, err := ParseArgs([]string{})
 	if err != nil {
@@ -465,7 +522,7 @@ func TestParseArgsTailnetDefaultFromCLI(t *testing.T) {
 }
 
 func TestParseArgsTailnetDefaultFromEnvironment(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("PORTAL_PORT", "8080")
 
 	cfg, err := ParseArgs([]string{})
 	if err != nil {
@@ -477,8 +534,8 @@ func TestParseArgsTailnetDefaultFromEnvironment(t *testing.T) {
 }
 
 func TestParseArgsRejectsMockWithPortAcrossSources(t *testing.T) {
-	t.Setenv("TGATE_MOCK", "true")
-	t.Setenv("TGATE_PORT", "8080")
+	t.Setenv("PORTAL_MOCK", "true")
+	t.Setenv("PORTAL_PORT", "8080")
 
 	_, err := ParseArgs([]string{})
 	if err == nil {
@@ -494,8 +551,8 @@ func TestParseArgsRequiresPortUnlessMock(t *testing.T) {
 }
 
 func TestParseArgsRejectsInvalidFunnelAllowlistEntry(t *testing.T) {
-	t.Setenv("TGATE_PORT", "8080")
-	t.Setenv("TGATE_FUNNEL_ALLOWLIST", "203.0.113.10,not-an-ip")
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_FUNNEL_ALLOWLIST", "203.0.113.10,not-an-ip")
 
 	_, err := ParseArgs([]string{})
 	if err == nil {
@@ -534,7 +591,7 @@ func TestParseArgsHelpReturnsHelpError(t *testing.T) {
 func writeConfigFile(t *testing.T, homeDir, content string) {
 	t.Helper()
 
-	configDir := filepath.Join(homeDir, ".tgate")
+	configDir := filepath.Join(homeDir, ".portal")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("failed to create config directory: %v", err)
 	}

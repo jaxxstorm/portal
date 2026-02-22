@@ -1,6 +1,6 @@
 # Mode Resolution Spec
 
-This page is the canonical behavior spec for how tgate resolves:
+This page is the canonical behavior spec for how portal resolves:
 - backend mode (`local-daemon` vs `tsnet`)
 - listen mode (`listener` vs `service`)
 - exposure mode (`tailnet` vs `funnel`)
@@ -8,12 +8,12 @@ This page is the canonical behavior spec for how tgate resolves:
 ## Inputs
 
 Primary configuration inputs:
-- `--force-tsnet` / `TGATE_FORCE_TSNET`
-- `--auth-key` / `TGATE_AUTH_KEY`
-- `--device-name` / `TGATE_DEVICE_NAME`
-- `--listen-mode` / `TGATE_LISTEN_MODE`
-- `--service-name` / `TGATE_SERVICE_NAME`
-- `--funnel` / `TGATE_FUNNEL`
+- `--force-tsnet` / `PORTAL_FORCE_TSNET`
+- `--auth-key` / `PORTAL_AUTH_KEY`
+- `--device-name` / `PORTAL_DEVICE_NAME`
+- `--listen-mode` / `PORTAL_LISTEN_MODE`
+- `--service-name` / `PORTAL_SERVICE_NAME`
+- `--funnel` / `PORTAL_FUNNEL`
 
 Naming note:
 - Canonical names are `device-name`, `listen-mode`, and `service-name`.
@@ -21,9 +21,9 @@ Naming note:
 - If canonical and legacy names are both set with different values, startup fails with a configuration conflict error.
 
 Supporting inputs:
-- `--serve-port` / `TGATE_SERVE_PORT`
-- `--use-https` / `TGATE_USE_HTTPS`
-- `--set-path` / `TGATE_SET_PATH`
+- `--serve-port` / `PORTAL_SERVE_PORT`
+- `--use-https` / `PORTAL_USE_HTTPS`
+- `--set-path` / `PORTAL_SET_PATH`
 
 ## Resolution Order
 
@@ -82,23 +82,23 @@ For mode conflicts (for example `service + funnel`), startup fails early with a 
 Tailnet/private listener mode (default):
 
 ```bash
-tgate 8080
+portal 8080
 ```
 
 Tailnet/private service mode on local daemon:
 
 ```bash
-tgate 8080 --listen-mode service --service-name svc:tgate
+portal 8080 --listen-mode service --service-name svc:portal
 ```
 
 Tailnet/private service mode on tsnet:
 
 ```bash
-tgate 8080 --force-tsnet --listen-mode service --service-name svc:tgate
+portal 8080 --force-tsnet --listen-mode service --service-name svc:portal
 ```
 
 Invalid mode combination:
 
 ```bash
-tgate 8080 --listen-mode service --funnel
+portal 8080 --listen-mode service --funnel
 ```

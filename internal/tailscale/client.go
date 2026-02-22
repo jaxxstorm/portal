@@ -14,7 +14,7 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/tailcfg"
 
-	"github.com/jaxxstorm/tgate/internal/logging"
+	"github.com/jaxxstorm/portal/internal/logging"
 )
 
 // Config holds configuration for Tailscale setup

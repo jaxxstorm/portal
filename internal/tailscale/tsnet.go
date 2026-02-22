@@ -17,7 +17,7 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 
-	"github.com/jaxxstorm/tgate/internal/logging"
+	"github.com/jaxxstorm/portal/internal/logging"
 )
 
 const (

@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/jaxxstorm/tgate/internal/model"
+	"github.com/jaxxstorm/portal/internal/model"
 )
 
 // StatsProvider interface for getting statistics

@@ -17,16 +17,16 @@ import (
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 
-	"github.com/jaxxstorm/tgate/internal/config"
-	"github.com/jaxxstorm/tgate/internal/httputil"
-	"github.com/jaxxstorm/tgate/internal/logging"
-	"github.com/jaxxstorm/tgate/internal/model"
-	"github.com/jaxxstorm/tgate/internal/proxy"
-	"github.com/jaxxstorm/tgate/internal/server"
-	"github.com/jaxxstorm/tgate/internal/startup"
-	"github.com/jaxxstorm/tgate/internal/tailscale"
-	"github.com/jaxxstorm/tgate/internal/tui"
-	"github.com/jaxxstorm/tgate/internal/ui"
+	"github.com/jaxxstorm/portal/internal/config"
+	"github.com/jaxxstorm/portal/internal/httputil"
+	"github.com/jaxxstorm/portal/internal/logging"
+	"github.com/jaxxstorm/portal/internal/model"
+	"github.com/jaxxstorm/portal/internal/proxy"
+	"github.com/jaxxstorm/portal/internal/server"
+	"github.com/jaxxstorm/portal/internal/startup"
+	"github.com/jaxxstorm/portal/internal/tailscale"
+	"github.com/jaxxstorm/portal/internal/tui"
+	"github.com/jaxxstorm/portal/internal/ui"
 )
 
 //go:embed ui/*
@@ -47,7 +47,7 @@ func main() {
 
 	// Handle version flag
 	if cfg.Version {
-		fmt.Printf("tgate version %s\n", Version)
+		fmt.Printf("portal version %s\n", Version)
 		os.Exit(0)
 	}
 
@@ -74,7 +74,7 @@ func main() {
 	startTime := time.Now()
 
 	logger.Info(logging.MsgServerStarting,
-		logging.Component("tgate"),
+		logging.Component("portal"),
 		logging.Version(Version),
 	)
 
@@ -84,7 +84,7 @@ func main() {
 		serverMode = model.ModeMock
 		logger.Info(logging.MsgMockModeConfiguration,
 			logging.MockMode(true),
-			logging.Status("auto_enabling_funnel"),
+			logging.Status("backend_simulation_enabled"),
 		)
 	} else {
 		serverMode = model.ModeProxy
@@ -386,7 +386,7 @@ func runWithTUI(ctx context.Context, logger *zap.Logger, useLocalTailscale bool,
 		}
 	}
 
-	fmt.Printf("tgate server stopped\n")
+	fmt.Printf("portal server stopped\n")
 }
 
 func setupLocalTailscale(ctx context.Context, tsClient *tailscale.Client, proxyServer *proxy.Server, logger *zap.Logger, cfg *config.Config) (cleanup func() error, uiCleanup func() error, serviceInfo *tailscale.ServiceInfo) {

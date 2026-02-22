@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jaxxstorm/tgate/internal/model"
+	"github.com/jaxxstorm/portal/internal/model"
 )
 
 // LogProvider interface for getting request logs and stats

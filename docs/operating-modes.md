@@ -5,13 +5,15 @@ For normative resolution rules, see [Mode Resolution Spec](mode-resolution-spec.
 
 ## Mental Model
 
-tgate behavior is the combination of three dimensions:
+portal behavior is the combination of three dimensions:
 - backend: `local-daemon` or `tsnet`
+- backend mode: `proxy` or `mock`
 - listen mode: `listener` or `service`
 - exposure: `tailnet` or `funnel`
 
 Defaults:
 - backend: local daemon when available, otherwise tsnet
+- backend mode: proxy
 - listen mode: listener
 - exposure: tailnet
 
@@ -45,37 +47,49 @@ Constraint:
 Tailnet/private listener mode (default):
 
 ```bash
-tgate 8080
+portal 8080
 ```
 
 Tailnet/private listener mode on tsnet:
 
 ```bash
-tgate 8080 --force-tsnet
+portal 8080 --force-tsnet
 ```
 
 Tailnet/private service mode on local daemon:
 
 ```bash
-tgate 8080 --listen-mode service --service-name svc:tgate
+portal 8080 --listen-mode service --service-name svc:portal
 ```
 
 Tailnet/private service mode on tsnet:
 
 ```bash
-tgate 8080 --force-tsnet --listen-mode service --service-name svc:tgate
+portal 8080 --force-tsnet --listen-mode service --service-name svc:portal
+```
+
+Mock backend on tailnet/private exposure (default):
+
+```bash
+portal --mock
+```
+
+Mock backend with explicit public Funnel exposure:
+
+```bash
+portal --mock --funnel
 ```
 
 Public funnel mode:
 
 ```bash
-tgate 8080 --funnel
+portal 8080 --funnel
 ```
 
 Invalid combination:
 
 ```bash
-tgate 8080 --listen-mode service --funnel
+portal 8080 --listen-mode service --funnel
 ```
 
 ## Service Mode Notes
@@ -93,6 +107,7 @@ tgate 8080 --listen-mode service --funnel
 
 Startup-ready output includes:
 - `mode`: `local_daemon` or `tsnet`
+- `backend_mode`: `proxy` or `mock`
 - `exposure`: `tailnet` or `funnel`
 - `service_url`
 - `web_ui_status`

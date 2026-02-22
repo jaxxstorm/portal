@@ -270,7 +270,7 @@ func TestValidateTSNetListenConfig(t *testing.T) {
 			name: "service mode valid",
 			config: TSNetConfig{
 				ListenMode:  TSNetListenModeService,
-				ServiceName: "svc:tgate",
+				ServiceName: "svc:portal",
 				ServePort:   443,
 			},
 			mode:    TSNetListenModeService,
@@ -290,7 +290,7 @@ func TestValidateTSNetListenConfig(t *testing.T) {
 			name: "service mode invalid with funnel",
 			config: TSNetConfig{
 				ListenMode:   TSNetListenModeService,
-				ServiceName:  "svc:tgate",
+				ServiceName:  "svc:portal",
 				EnableFunnel: true,
 				ServePort:    443,
 			},

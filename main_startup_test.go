@@ -9,9 +9,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/jaxxstorm/tgate/internal/config"
-	"github.com/jaxxstorm/tgate/internal/logging"
-	"github.com/jaxxstorm/tgate/internal/startup"
+	"github.com/jaxxstorm/portal/internal/config"
+	"github.com/jaxxstorm/portal/internal/logging"
+	"github.com/jaxxstorm/portal/internal/startup"
 )
 
 func TestLogStartupSummaryEmitsStructuredJSON(t *testing.T) {
@@ -46,7 +46,7 @@ func TestLogStartupSummaryEmitsStructuredJSON(t *testing.T) {
 	if got, want := payload["message"], logging.MsgStartupReady; got != want {
 		t.Fatalf("unexpected message: got %v want %q", got, want)
 	}
-	for _, key := range []string{"readiness", "mode", "exposure", "service_url", "web_ui_status", "web_ui_reason", "capability_funnel", "tsnet_listen_mode_configured", "tsnet_listen_mode_effective"} {
+	for _, key := range []string{"readiness", "mode", "backend_mode", "exposure", "service_url", "web_ui_status", "web_ui_reason", "capability_funnel", "tsnet_listen_mode_configured", "tsnet_listen_mode_effective"} {
 		if _, ok := payload[key]; !ok {
 			t.Fatalf("expected key %q in startup payload", key)
 		}
@@ -68,5 +68,25 @@ func TestLogStartupSummarySkipsNonReadyState(t *testing.T) {
 	logStartupSummary(logger, summary)
 	if got := strings.TrimSpace(buf.String()); got != "" {
 		t.Fatalf("expected no startup summary log for non-ready summary, got %q", got)
+	}
+}
+
+func TestLogStartupSummarySkipsWhenFunnelStartupNotReady(t *testing.T) {
+	cfg := &config.Config{
+		Funnel: true,
+		Mock:   true,
+	}
+	summary := startup.BuildReadySummary(cfg, true, "", "", "", startup.TSNetDetails{})
+
+	var buf bytes.Buffer
+	logger := zap.New(zapcore.NewCore(
+		zapcore.NewJSONEncoder(logging.JSONEncoderConfig()),
+		zapcore.AddSync(&buf),
+		zapcore.InfoLevel,
+	))
+
+	logStartupSummary(logger, summary)
+	if got := strings.TrimSpace(buf.String()); got != "" {
+		t.Fatalf("expected no startup summary log when funnel startup is not ready, got %q", got)
 	}
 }

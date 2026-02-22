@@ -1,7 +1,7 @@
 # Configuration
 
-tgate supports 12-factor configuration using CLI flags, environment variables,
-and `~/.tgate/config.yml`.
+portal supports 12-factor configuration using CLI flags, environment variables,
+and `~/.portal/config.yml`.
 
 For normative mode-combination rules, see
 [Mode Resolution Spec](mode-resolution-spec.md).
@@ -10,15 +10,15 @@ For normative mode-combination rules, see
 
 Precedence order:
 1. CLI flags/args
-2. Environment variables (`TGATE_*`)
-3. Config file (`~/.tgate/config.yml`)
+2. Environment variables (`PORTAL_*`)
+3. Config file (`~/.portal/config.yml`)
 4. Built-in defaults
 
 ## Config File
 
 Default path:
 
-`~/.tgate/config.yml`
+`~/.portal/config.yml`
 
 Example:
 
@@ -27,9 +27,9 @@ port: 8080
 funnel: false
 funnel-allowlist: []
 verbose: true
-device-name: tgate
+device-name: portal
 listen-mode: listener
-service-name: svc:tgate
+service-name: svc:portal
 set-path: /
 serve-port: 80
 no-tui: false
@@ -39,12 +39,13 @@ no-tui: false
 
 | Purpose | CLI | Env | Default |
 |---|---|---|---|
-| Force tsnet backend | `--force-tsnet` | `TGATE_FORCE_TSNET` | `false` |
-| Auth-key tsnet backend | `--auth-key` | `TGATE_AUTH_KEY` | empty |
-| Device name | `--device-name` | `TGATE_DEVICE_NAME` | `tgate` |
-| Listen mode | `--listen-mode` | `TGATE_LISTEN_MODE` | `listener` |
-| Service name | `--service-name` | `TGATE_SERVICE_NAME` | `svc:tgate` |
-| Public exposure | `--funnel` | `TGATE_FUNNEL` | `false` |
+| Force tsnet backend | `--force-tsnet` | `PORTAL_FORCE_TSNET` | `false` |
+| Auth-key tsnet backend | `--auth-key` | `PORTAL_AUTH_KEY` | empty |
+| Device name | `--device-name` | `PORTAL_DEVICE_NAME` | `portal` |
+| Mock backend mode | `--mock` | `PORTAL_MOCK` | `false` |
+| Listen mode | `--listen-mode` | `PORTAL_LISTEN_MODE` | `listener` |
+| Service name | `--service-name` | `PORTAL_SERVICE_NAME` | `svc:portal` |
+| Public exposure | `--funnel` | `PORTAL_FUNNEL` | `false` |
 
 Hard rule:
 - `--listen-mode service` cannot be combined with `--funnel`.
@@ -56,66 +57,79 @@ Naming note:
 ## Environment Variables
 
 Examples:
-- `TGATE_PORT=8080`
-- `TGATE_FUNNEL=true`
-- `TGATE_FUNNEL_ALLOWLIST=203.0.113.10,198.51.100.0/24`
-- `TGATE_SERVE_PORT=443`
-- `TGATE_DEVICE_NAME=my-node`
-- `TGATE_LISTEN_MODE=service`
-- `TGATE_SERVICE_NAME=svc:my-service`
-- `TGATE_NO_TUI=true`
+- `PORTAL_PORT=8080`
+- `PORTAL_FUNNEL=true`
+- `PORTAL_FUNNEL_ALLOWLIST=203.0.113.10,198.51.100.0/24`
+- `PORTAL_SERVE_PORT=443`
+- `PORTAL_DEVICE_NAME=my-node`
+- `PORTAL_LISTEN_MODE=service`
+- `PORTAL_SERVICE_NAME=svc:my-service`
+- `PORTAL_NO_TUI=true`
 
 ## CLI Examples
 
 Tailnet/private listener mode (default):
 
 ```bash
-tgate 8080
+portal 8080
 ```
 
 Tailnet/private service mode:
 
 ```bash
-tgate 8080 --listen-mode service --service-name svc:tgate
+portal 8080 --listen-mode service --service-name svc:portal
 ```
 
 Tailnet/private service mode on forced tsnet:
 
 ```bash
-tgate 8080 --force-tsnet --listen-mode service --service-name svc:tgate
+portal 8080 --force-tsnet --listen-mode service --service-name svc:portal
+```
+
+Mock backend on tailnet/private exposure (default):
+
+```bash
+portal --mock
+```
+
+Mock backend with explicit public Funnel exposure:
+
+```bash
+portal --mock --funnel
 ```
 
 Public Funnel mode:
 
 ```bash
-tgate 8080 --funnel
+portal 8080 --funnel
 ```
 
 Invalid combination:
 
 ```bash
-tgate 8080 --listen-mode service --funnel
+portal 8080 --listen-mode service --funnel
 ```
 
 ## Startup Output And Web UI Location
 
-tgate emits a definitive startup-ready log event only after serving is active.
+portal emits a definitive startup-ready log event only after serving is active.
 This includes service reachability, exposure mode, and Web UI status.
 
-When `--ui-port` is omitted, tgate prefers local port `4040` for the UI (or the
+When `--ui-port` is omitted, portal prefers local port `4040` for the UI (or the
 next available nearby port) and reports the effective tailnet URL in startup
 output (`web_ui_url`) when UI is available.
 
 Non-TUI JSON logging example:
 
 ```bash
-tgate 8080 --no-tui --json
+portal 8080 --no-tui --json
 ```
 
 Look for keys:
 - `message: "Startup ready"`
 - `readiness`
 - `mode`
+- `backend_mode`
 - `exposure`
 - `service_url`
 - `web_ui_status`
@@ -124,7 +138,7 @@ Look for keys:
 
 ## Funnel Allowlist
 
-Use `funnel-allowlist` in config or `TGATE_FUNNEL_ALLOWLIST` in env to restrict
+Use `funnel-allowlist` in config or `PORTAL_FUNNEL_ALLOWLIST` in env to restrict
 Funnel requests by source IP.
 
 Supported entry formats:
@@ -132,11 +146,11 @@ Supported entry formats:
 - CIDR block (for example `198.51.100.0/24`)
 - comma-separated env list (for example `203.0.113.10,198.51.100.0/24`)
 
-When Funnel allowlist is active and `set-path` is `/`, tgate configures Funnel
+When Funnel allowlist is active and `set-path` is `/`, portal configures Funnel
 with TLS-terminated TCP forwarding + PROXY protocol v2 and uses PROXY source IP
 for allowlist checks.
 
-If `set-path` is non-root, tgate falls back to trusted HTTP metadata
+If `set-path` is non-root, portal falls back to trusted HTTP metadata
 (`Tailscale-Client-IP`, `Forwarded`, `X-Forwarded-For`, `X-Real-IP`) plus
 socket remote address fallback.
 

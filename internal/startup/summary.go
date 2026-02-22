@@ -6,8 +6,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/jaxxstorm/tgate/internal/config"
-	"github.com/jaxxstorm/tgate/internal/logging"
+	"github.com/jaxxstorm/portal/internal/config"
+	"github.com/jaxxstorm/portal/internal/logging"
 )
 
 const (
@@ -18,6 +18,9 @@ const (
 
 	ExposureTailnet = "tailnet"
 	ExposureFunnel  = "funnel"
+
+	BackendModeProxy = "proxy"
+	BackendModeMock  = "mock"
 
 	WebUIStatusEnabled     = "enabled"
 	WebUIStatusDisabled    = "disabled"
@@ -47,6 +50,7 @@ type TSNetDetails struct {
 type Summary struct {
 	Readiness   string
 	Mode        string
+	BackendMode string
 	Exposure    string
 	ServiceURL  string
 	LocalURL    string
@@ -71,6 +75,7 @@ func BuildReadySummary(cfg *config.Config, useLocalDaemon bool, serviceURL, loca
 	summary := Summary{
 		Readiness:   ReadinessReady,
 		Mode:        mode,
+		BackendMode: resolveBackendMode(cfg),
 		Exposure:    exposure,
 		ServiceURL:  strings.TrimSpace(serviceURL),
 		LocalURL:    strings.TrimSpace(localURL),
@@ -159,6 +164,7 @@ func (s Summary) Fields() []zap.Field {
 		logging.Component("startup"),
 		zap.String("readiness", s.Readiness),
 		zap.String("mode", s.Mode),
+		zap.String("backend_mode", s.BackendMode),
 		zap.String("exposure", s.Exposure),
 		zap.String("service_url", s.ServiceURL),
 		zap.String("web_ui_status", s.WebUIStatus),
@@ -192,4 +198,11 @@ func (s Summary) Fields() []zap.Field {
 	}
 
 	return fields
+}
+
+func resolveBackendMode(cfg *config.Config) string {
+	if cfg != nil && cfg.Mock {
+		return BackendModeMock
+	}
+	return BackendModeProxy
 }
