@@ -5,7 +5,7 @@ before:
     - go mod tidy
 
 builds:
-  - id: tgate
+  - id: portal
     goos:
       - darwin
       - windows
@@ -17,10 +17,10 @@ builds:
       - "-X main.Version={{.Version}}"
 
 archives:
-  - id: tgate
+  - id: portal
     format: tar.gz
     builds:
-      - tgate
+      - portal
     name_template: "{{ .Binary }}-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
     format_overrides:
       - goos: windows
@@ -34,7 +34,7 @@ changelog:
       - "^test:"
 
 brews:
-  - name: tgate
+  - name: portal
     repository:
       owner: jaxxstorm
       name: homebrew-tap
