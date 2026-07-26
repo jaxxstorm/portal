@@ -33,6 +33,7 @@ service-name: svc:portal
 set-path: /
 serve-port: 80
 no-tui: false
+auth-mode: none
 ```
 
 Serve-port default behavior:
@@ -50,6 +51,9 @@ Serve-port default behavior:
 | Listen mode | `--listen-mode` | `PORTAL_LISTEN_MODE` | `listener` |
 | Service name | `--service-name` | `PORTAL_SERVICE_NAME` | `svc:portal` |
 | Public exposure | `--funnel` | `PORTAL_FUNNEL` | `false` |
+| Endpoint authorization mode | `--auth-mode` | `PORTAL_AUTH_MODE` | `none` |
+| HTTP Basic username | `--auth-username` | `PORTAL_AUTH_USERNAME` | empty |
+| HTTP Basic password | `--auth-password` | `PORTAL_AUTH_PASSWORD` | empty |
 
 Hard rule:
 - `--listen-mode service` cannot be combined with `--funnel`.
@@ -70,6 +74,9 @@ Examples:
 - `PORTAL_LISTEN_MODE=service`
 - `PORTAL_SERVICE_NAME=svc:my-service`
 - `PORTAL_NO_TUI=true`
+- `PORTAL_AUTH_MODE=basic`
+- `PORTAL_AUTH_USERNAME=alice`
+- `PORTAL_AUTH_PASSWORD=change-me`
 
 ## CLI Examples
 
@@ -107,6 +114,18 @@ Public Funnel mode:
 
 ```bash
 portal 8080 --funnel
+```
+
+Tailnet/private endpoint with HTTP Basic authorization:
+
+```bash
+portal 8080 --auth-mode basic --auth-username alice --auth-password change-me
+```
+
+Public Funnel endpoint with HTTP Basic authorization:
+
+```bash
+portal 8080 --funnel --auth-mode basic --auth-username alice --auth-password change-me
 ```
 
 Invalid combination:
@@ -162,3 +181,22 @@ socket remote address fallback.
 Invalid allowlist entries fail startup with a configuration error.
 
 For end-to-end setup details, see [IP Whitelisting](ip-whitelisting.md).
+
+## Endpoint Authorization
+
+Endpoint authorization is disabled by default. Set `auth-mode` to `basic` and
+provide non-empty `auth-username` and `auth-password` values to require HTTP
+Basic credentials before Portal proxies a request or produces a mock response.
+Unauthenticated requests receive `401 Unauthorized` with a Basic challenge.
+
+Authorization applies to both tailnet-private endpoints and explicitly public
+Funnel endpoints. It does not make a tailnet endpoint public, and it does not
+enable Funnel. In Funnel mode, Portal performs the Funnel allowlist check before
+the authorization check; HTTPS remains a Funnel prerequisite and protects Basic
+credentials in transit.
+
+Do not commit Basic passwords to source control. Prefer `PORTAL_AUTH_PASSWORD`
+or a configuration file with access restricted to the Portal operator. Portal
+redacts request authorization headers from its request log and does not forward
+them to the configured backend. Future OAuth providers will use the same
+authorization boundary but are not included in this release.

@@ -98,6 +98,7 @@ type Server struct {
 	funnelEnabled   bool
 	funnelAllowlist []netip.Prefix
 	preferRemoteIP  bool
+	authorizer      Authorizer
 }
 
 // Config holds configuration for the proxy server
@@ -111,6 +112,7 @@ type Config struct {
 	FunnelAllowlist []netip.Prefix
 	PreferRemoteIP  bool
 	InitialEndpoint model.EndpointState
+	Authorizer      Authorizer
 }
 
 // NewServer creates a new proxy server
@@ -156,6 +158,7 @@ func NewServer(config Config) *Server {
 		funnelEnabled:   config.FunnelEnabled,
 		funnelAllowlist: config.FunnelAllowlist,
 		preferRemoteIP:  config.PreferRemoteIP,
+		authorizer:      config.Authorizer,
 	}
 }
 
@@ -264,6 +267,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Capture request headers
 	reqHeaders := make(map[string]string)
 	for k, v := range r.Header {
+		if strings.EqualFold(k, "Authorization") {
+			reqHeaders[k] = "[redacted]"
+			continue
+		}
 		reqHeaders[k] = strings.Join(v, ", ")
 	}
 
@@ -275,7 +282,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.String("remote_addr", r.RemoteAddr),
 	)
 
-	if s.enforceFunnelAllowlist(lrw, r) {
+	if s.enforceFunnelAllowlist(lrw, r) && s.enforceAuthorization(lrw, r) {
+		if s.authorizer != nil {
+			// The authorization header is Portal's credential, not the backend's.
+			r.Header.Del("Authorization")
+		}
+
 		// Handle request based on mode
 		switch s.mode {
 		case model.ModeMock:
@@ -325,6 +337,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.Int64("response_size", lrw.size),
 	)
 
+}
+
+func (s *Server) enforceAuthorization(w http.ResponseWriter, r *http.Request) bool {
+	if s.authorizer == nil || s.authorizer.Authorize(r) {
+		return true
+	}
+
+	w.Header().Set("WWW-Authenticate", basicAuthRealm)
+	http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	return false
 }
 
 func formatResponseBodyPreview(headers map[string]string, preview []byte) string {

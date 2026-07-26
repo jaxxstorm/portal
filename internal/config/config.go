@@ -17,6 +17,8 @@ import (
 const (
 	TSNetListenModeListener = "listener"
 	TSNetListenModeService  = "service"
+	AuthModeNone            = "none"
+	AuthModeBasic           = "basic"
 
 	deviceNameKey          = "device-name"
 	legacyTailscaleNameKey = "tailscale-name"
@@ -48,6 +50,9 @@ type Config struct {
 	CleanupServe     bool
 	TSNetListenMode  string
 	TSNetServiceName string
+	AuthMode         string
+	AuthUsername     string
+	AuthPassword     string
 }
 
 // Parse parses command line arguments and returns a validated configuration
@@ -110,6 +115,10 @@ func ParseArgs(args []string) (*Config, error) {
 	if serviceName == "" {
 		serviceName = "svc:portal"
 	}
+	authMode := strings.ToLower(strings.TrimSpace(v.GetString("auth-mode")))
+	if authMode == "" {
+		authMode = AuthModeNone
+	}
 
 	funnelAllowlist, err := parseFunnelAllowlist(normalizeList(v.Get("funnel-allowlist")))
 	if err != nil {
@@ -137,6 +146,9 @@ func ParseArgs(args []string) (*Config, error) {
 		CleanupServe:     v.GetBool("cleanup-serve"),
 		TSNetListenMode:  listenMode,
 		TSNetServiceName: serviceName,
+		AuthMode:         authMode,
+		AuthUsername:     v.GetString("auth-username"),
+		AuthPassword:     v.GetString("auth-password"),
 	}
 
 	// Handle version flag
@@ -165,6 +177,9 @@ func ParseArgs(args []string) (*Config, error) {
 	// Auto-configure options
 	cfg.applyAutoConfiguration()
 	if err := cfg.validateTSNetServiceConfig(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateAuthorizationConfig(); err != nil {
 		return nil, err
 	}
 
@@ -307,6 +322,9 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 	flags.String(serviceNameKey, "", "Service name used when listen-mode=service (default: svc:portal; requires tagged host identity)")
 	flags.String(legacyListenModeKey, "", "Deprecated alias for --listen-mode")
 	flags.String(legacyServiceNameKey, "", "Deprecated alias for --service-name")
+	flags.String("auth-mode", AuthModeNone, "Endpoint authorization mode: none or basic")
+	flags.String("auth-username", "", "HTTP Basic authorization username")
+	flags.String("auth-password", "", "HTTP Basic authorization password")
 	_ = flags.MarkDeprecated(legacyTailscaleNameKey, "use --device-name instead")
 	_ = flags.MarkDeprecated(legacyListenModeKey, "use --listen-mode instead")
 	_ = flags.MarkDeprecated(legacyServiceNameKey, "use --service-name instead")
@@ -338,6 +356,9 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 		serviceNameKey,
 		legacyListenModeKey,
 		legacyServiceNameKey,
+		"auth-mode",
+		"auth-username",
+		"auth-password",
 	}
 
 	for _, key := range keys {
@@ -457,5 +478,25 @@ func (c *Config) validateTSNetServiceConfig() error {
 		return nil
 	default:
 		return fmt.Errorf("invalid listen-mode %q: must be %q or %q", c.TSNetListenMode, TSNetListenModeListener, TSNetListenModeService)
+	}
+}
+
+func (c *Config) validateAuthorizationConfig() error {
+	switch c.AuthMode {
+	case AuthModeNone:
+		if strings.TrimSpace(c.AuthUsername) != "" || c.AuthPassword != "" {
+			return fmt.Errorf("auth-username and auth-password require auth-mode=basic")
+		}
+		return nil
+	case AuthModeBasic:
+		if strings.TrimSpace(c.AuthUsername) == "" {
+			return fmt.Errorf("auth-username is required when auth-mode=basic")
+		}
+		if c.AuthPassword == "" {
+			return fmt.Errorf("auth-password is required when auth-mode=basic")
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid auth-mode %q: must be %q or %q", c.AuthMode, AuthModeNone, AuthModeBasic)
 	}
 }

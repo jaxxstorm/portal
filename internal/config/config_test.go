@@ -583,6 +583,131 @@ func TestParseArgsTailnetDefaultFromEnvironment(t *testing.T) {
 	}
 }
 
+func TestParseArgsAuthorizationDefaultsToNone(t *testing.T) {
+	cfg, err := ParseArgs([]string{"8080"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.AuthMode, AuthModeNone; got != want {
+		t.Fatalf("expected auth mode %q, got %q", want, got)
+	}
+	if cfg.AuthUsername != "" || cfg.AuthPassword != "" {
+		t.Fatalf("expected empty default authorization credentials")
+	}
+}
+
+func TestParseArgsLoadsBasicAuthorizationFromConfigFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeConfigFile(t, home, `
+port: 8080
+auth-mode: basic
+auth-username: alice
+auth-password: config-secret
+`)
+
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.AuthMode, AuthModeBasic; got != want {
+		t.Fatalf("expected auth mode %q, got %q", want, got)
+	}
+	if got, want := cfg.AuthUsername, "alice"; got != want {
+		t.Fatalf("expected username %q, got %q", want, got)
+	}
+	if got, want := cfg.AuthPassword, "config-secret"; got != want {
+		t.Fatalf("expected password %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsLoadsBasicAuthorizationFromEnvironment(t *testing.T) {
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_AUTH_MODE", "basic")
+	t.Setenv("PORTAL_AUTH_USERNAME", "alice")
+	t.Setenv("PORTAL_AUTH_PASSWORD", "environment-secret")
+
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.AuthMode, AuthModeBasic; got != want {
+		t.Fatalf("expected auth mode %q, got %q", want, got)
+	}
+	if got, want := cfg.AuthUsername, "alice"; got != want {
+		t.Fatalf("expected username %q, got %q", want, got)
+	}
+	if got, want := cfg.AuthPassword, "environment-secret"; got != want {
+		t.Fatalf("expected password %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsAuthorizationCLIOverridesEnvironmentAndConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeConfigFile(t, home, `
+port: 8080
+auth-mode: basic
+auth-username: config-user
+auth-password: config-password
+`)
+	t.Setenv("PORTAL_AUTH_USERNAME", "env-user")
+	t.Setenv("PORTAL_AUTH_PASSWORD", "env-password")
+
+	cfg, err := ParseArgs([]string{"--auth-username", "cli-user", "--auth-password", "cli-password"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got, want := cfg.AuthUsername, "cli-user"; got != want {
+		t.Fatalf("expected CLI username %q, got %q", want, got)
+	}
+	if got, want := cfg.AuthPassword, "cli-password"; got != want {
+		t.Fatalf("expected CLI password %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsAuthorizationValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing username",
+			args: []string{"8080", "--auth-mode", "basic", "--auth-password", "secret"},
+			want: "auth-username is required",
+		},
+		{
+			name: "missing password",
+			args: []string{"8080", "--auth-mode", "basic", "--auth-username", "alice"},
+			want: "auth-password is required",
+		},
+		{
+			name: "credentials without basic mode",
+			args: []string{"8080", "--auth-username", "alice", "--auth-password", "secret"},
+			want: "require auth-mode=basic",
+		},
+		{
+			name: "unsupported mode",
+			args: []string{"8080", "--auth-mode", "oauth"},
+			want: `invalid auth-mode "oauth"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseArgs(tt.args)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
 func TestParseArgsRejectsMockWithPortAcrossSources(t *testing.T) {
 	t.Setenv("PORTAL_MOCK", "true")
 	t.Setenv("PORTAL_PORT", "8080")

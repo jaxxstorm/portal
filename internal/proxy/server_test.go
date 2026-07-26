@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -173,6 +174,136 @@ func TestServeHTTPFunnelModePrefersRemoteAddrWhenConfigured(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected remote allowlisted request, got status %d", rr.Code)
+	}
+}
+
+func TestServeHTTPBasicAuthorizationAllowsValidCredentials(t *testing.T) {
+	server := NewServer(Config{
+		Mode:       model.ModeMock,
+		UseTUI:     true,
+		Logger:     zap.NewNop(),
+		Authorizer: NewBasicAuthorizer("alice", "secret"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.SetBasicAuth("alice", "secret")
+	rr := httptest.NewRecorder()
+
+	server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected valid credentials to be accepted, got status %d", rr.Code)
+	}
+	if got := rr.Header().Get("X-portal-mode"); got != "mock" {
+		t.Fatalf("expected mock backend response, got %q", got)
+	}
+	logs := server.GetRequestLogs()
+	if got, want := logs[0].Headers["Authorization"], "[redacted]"; got != want {
+		t.Fatalf("expected authorization header %q in request log, got %q", want, got)
+	}
+}
+
+func TestServeHTTPBasicAuthorizationRejectsInvalidCredentials(t *testing.T) {
+	server := NewServer(Config{
+		Mode:       model.ModeMock,
+		UseTUI:     true,
+		Logger:     zap.NewNop(),
+		Authorizer: NewBasicAuthorizer("alice", "secret"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.SetBasicAuth("alice", "wrong")
+	rr := httptest.NewRecorder()
+
+	server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected invalid credentials to be rejected, got status %d", rr.Code)
+	}
+	if got, want := rr.Header().Get("WWW-Authenticate"), basicAuthRealm; got != want {
+		t.Fatalf("expected challenge %q, got %q", want, got)
+	}
+	if got := rr.Header().Get("X-portal-mode"); got != "" {
+		t.Fatalf("expected request not to reach mock backend, got %q", got)
+	}
+}
+
+func TestServeHTTPFunnelAllowlistRunsBeforeAuthorization(t *testing.T) {
+	server := NewServer(Config{
+		Mode:            model.ModeMock,
+		UseTUI:          true,
+		Logger:          zap.NewNop(),
+		FunnelEnabled:   true,
+		FunnelAllowlist: mustPrefixes(t, "203.0.113.0/24"),
+		Authorizer:      NewBasicAuthorizer("alice", "secret"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.2:12345"
+	req.Header.Set("X-Forwarded-For", "192.0.2.9")
+	rr := httptest.NewRecorder()
+
+	server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected non-allowlisted request to be rejected, got status %d", rr.Code)
+	}
+	if got := rr.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("expected no authentication challenge for denied source, got %q", got)
+	}
+}
+
+func TestServeHTTPFunnelAuthorizationAllowsValidCredentials(t *testing.T) {
+	server := NewServer(Config{
+		Mode:            model.ModeMock,
+		UseTUI:          true,
+		Logger:          zap.NewNop(),
+		FunnelEnabled:   true,
+		FunnelAllowlist: mustPrefixes(t, "203.0.113.0/24"),
+		Authorizer:      NewBasicAuthorizer("alice", "secret"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.2:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.10")
+	req.SetBasicAuth("alice", "secret")
+	rr := httptest.NewRecorder()
+
+	server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected authorized allowlisted request, got status %d", rr.Code)
+	}
+}
+
+func TestServeHTTPBasicAuthorizationIsNotForwardedToBackend(t *testing.T) {
+	var backendAuthorization string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendAuthorization = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	port := backend.Listener.Addr().(*net.TCPAddr).Port
+	server := NewServer(Config{
+		Mode:       model.ModeProxy,
+		TargetPort: port,
+		UseTUI:     true,
+		Logger:     zap.NewNop(),
+		Authorizer: NewBasicAuthorizer("alice", "secret"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.SetBasicAuth("alice", "secret")
+	rr := httptest.NewRecorder()
+
+	server.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected proxied response status %d, got %d", http.StatusNoContent, rr.Code)
+	}
+	if backendAuthorization != "" {
+		t.Fatalf("expected authorization header not to reach backend, got %q", backendAuthorization)
 	}
 }
 

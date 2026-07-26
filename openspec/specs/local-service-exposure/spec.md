@@ -3,7 +3,7 @@
 Define portal's core product behavior as "ngrok over Tailscale": proxy local developer services privately to the tailnet by default, with explicit opt-in public exposure via Tailscale Funnel.
 ## Requirements
 ### Requirement: Tailnet Proxy For Local Developer Services
-portal MUST proxy a developer's local HTTP service to their Tailscale tailnet so authenticated tailnet users can access it securely, regardless of whether the service configuration is provided by CLI, `~/.portal/config.yml`, or `PORTAL_*` environment variables. Funnel request allowlist controls MUST NOT affect tailnet-private request handling.
+portal MUST proxy a developer's local HTTP service to their Tailscale tailnet so authenticated tailnet users can access it securely, regardless of whether the service configuration is provided by CLI, `~/.portal/config.yml`, or `PORTAL_*` environment variables. Funnel request allowlist controls MUST NOT affect tailnet-private request handling. When endpoint authorization is configured, portal MUST authorize tailnet requests before proxying them.
 
 #### Scenario: Tailnet proxy is available from CLI configuration
 - **WHEN** a developer runs `portal <port>` and the local service is reachable
@@ -15,8 +15,12 @@ portal MUST proxy a developer's local HTTP service to their Tailscale tailnet so
 - **THEN** portal exposes a tailnet-accessible endpoint that proxies traffic to the local service
 - **AND** the endpoint remains private to the tailnet
 
+#### Scenario: Tailnet proxy requires configured endpoint authorization
+- **WHEN** a developer runs `portal <port>` with endpoint authorization configured
+- **THEN** Portal only proxies tailnet requests that satisfy the configured authorization provider
+
 ### Requirement: Optional Public Proxy Via Tailscale Funnel
-portal MUST support explicit opt-in public exposure of a local developer service via Tailscale Funnel, while preserving proxying and request visibility behavior, regardless of whether funnel is enabled by CLI, config file, or environment variable. When a Funnel allowlist is configured, portal MUST enforce it before proxying requests and MUST deny requests when a trustworthy client source IP cannot be determined.
+portal MUST support explicit opt-in public exposure of a local developer service via Tailscale Funnel, while preserving proxying and request visibility behavior, regardless of whether funnel is enabled by CLI, config file, or environment variable. When a Funnel allowlist is configured, portal MUST enforce it before proxying requests and MUST deny requests when a trustworthy client source IP cannot be determined. When endpoint authorization is configured, portal MUST authorize Funnel requests after Funnel allowlist enforcement and before proxying.
 
 #### Scenario: Developer enables Funnel on a local service with CLI
 - **WHEN** a developer runs `portal <port> --funnel`
@@ -41,6 +45,10 @@ portal MUST support explicit opt-in public exposure of a local developer service
 - **WHEN** Funnel mode is enabled with an allowlist and no trustworthy client source IP can be resolved from available request metadata
 - **THEN** portal returns an HTTP 403 response
 - **AND** portal logs that the request was denied due to unresolved client identity
+
+#### Scenario: Authorized Funnel request is proxied
+- **WHEN** a developer runs `portal <port> --funnel` with endpoint authorization configured, Funnel HTTPS prerequisites are satisfied, and a request passes Funnel allowlist enforcement and authorization
+- **THEN** portal proxies the request to the local service
 
 ### Requirement: Clear Security Defaults Across Exposure Modes
 portal MUST default to private tailnet access and MUST require explicit user action to expose a service publicly across all supported configuration sources, including mock backend runs.

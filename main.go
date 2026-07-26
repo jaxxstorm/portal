@@ -181,6 +181,11 @@ func main() {
 		)
 	}
 
+	var authorizer proxy.Authorizer
+	if cfg.AuthMode == config.AuthModeBasic {
+		authorizer = proxy.NewBasicAuthorizer(cfg.AuthUsername, cfg.AuthPassword)
+	}
+
 	proxyConfig := proxy.Config{
 		TargetPort:      cfg.Port,
 		UseTUI:          !cfg.NoTUI,
@@ -190,6 +195,7 @@ func main() {
 		FunnelAllowlist: cfg.FunnelAllowlist,
 		PreferRemoteIP:  effectiveFunnelProxyProtocol,
 		InitialEndpoint: initialEndpointState(cfg, useLocalTailscale),
+		Authorizer:      authorizer,
 	}
 
 	proxyServer := proxy.NewServer(proxyConfig)
