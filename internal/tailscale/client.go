@@ -273,6 +273,8 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 				logging.Component("tailscale_serve"),
 				logging.ServePort(int(srvPort)),
 				zap.Bool("use_tls", useTLS),
+				zap.String("certificate_status", "not_verified"),
+				zap.String("funnel_status", "failed"),
 				logging.Status("funnel_requires_https_443"),
 			)
 			return nil, fmt.Errorf("funnel requires HTTPS on port 443")
@@ -282,6 +284,8 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 		if err := c.enableHTTPSFeature(ctx); err != nil {
 			c.logger.Error("Failed to enable HTTPS feature for funnel",
 				logging.Component("tailscale_serve"),
+				zap.String("certificate_status", "failed"),
+				zap.String("funnel_status", "blocked"),
 				logging.Error(err),
 				logging.Status("funnel_setup_failed"),
 			)
@@ -298,6 +302,8 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 			c.logger.Error("Certificate check failed for funnel",
 				logging.Component("tailscale_serve"),
 				zap.String("dns_name", dnsName),
+				zap.String("certificate_status", "failed"),
+				zap.String("funnel_status", "blocked"),
 				logging.Error(err),
 				logging.Status("funnel_cert_check_failed"),
 			)
@@ -307,6 +313,8 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 		sc.SetFunnel(dnsName, srvPort, true)
 		c.logger.Info("Funnel enabled successfully",
 			logging.Component("tailscale_serve"),
+			zap.String("certificate_status", "verified"),
+			zap.String("funnel_status", "ready"),
 			logging.Status("internet_accessible"),
 		)
 	}
@@ -325,8 +333,16 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 	// Apply the serve config
 	err = c.lc.SetServeConfig(ctx, sc)
 	if err != nil {
+		certificateStatus := "not_required"
+		funnelStatus := "disabled"
+		if config.EnableFunnel {
+			certificateStatus = "verified"
+			funnelStatus = "failed"
+		}
 		c.logger.Error("Failed to apply serve config",
 			logging.Component("tailscale_serve"),
+			zap.String("certificate_status", certificateStatus),
+			zap.String("funnel_status", funnelStatus),
 			logging.Error(err),
 		)
 		return nil, fmt.Errorf("failed to set serve config: %w", err)
@@ -353,6 +369,8 @@ func (c *Client) SetupServe(ctx context.Context, config Config) (*ServiceInfo, e
 		c.logger.Info("Tailscale serve success - internet accessible",
 			logging.Component("tailscale_serve"),
 			logging.URL(url),
+			zap.String("certificate_status", "verified"),
+			zap.String("funnel_status", "ready"),
 		)
 	} else {
 		c.logger.Info("Tailscale serve success - tailnet only",

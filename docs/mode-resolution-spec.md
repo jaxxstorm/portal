@@ -8,8 +8,9 @@ This page is the canonical behavior spec for how portal resolves:
 ## Inputs
 
 Primary configuration inputs:
-- `--force-tsnet` / `PORTAL_FORCE_TSNET`
-- `--auth-key` / `PORTAL_AUTH_KEY`
+- `portal serve node` / `portal mock node`
+- `--force-tsnet` / `PORTAL_FORCE_TSNET` (legacy)
+- `--auth-key` / `PORTAL_AUTH_KEY` (legacy)
 - `--device-name` / `PORTAL_DEVICE_NAME`
 - `--listen-mode` / `PORTAL_LISTEN_MODE`
 - `--service-name` / `PORTAL_SERVICE_NAME`
@@ -30,9 +31,11 @@ Supporting inputs:
 1. Parse config with standard precedence: CLI > env > config file > defaults.
 2. Validate static constraints (mode conflicts and value formats).
 3. Resolve backend:
-   - If `force-tsnet=true` or `auth-key` is set: backend is `tsnet`.
+   - If the `node` subcommand is selected: backend is `tsnet`.
+   - The legacy `force-tsnet=true` or `auth-key` inputs also select `tsnet`.
    - Otherwise, if local tailscaled is available: backend is `local-daemon`.
-   - Otherwise: backend is `tsnet`.
+   - Otherwise: startup fails with remediation to start tailscaled or select
+     the `node` subcommand.
 4. Resolve listen mode:
    - `listener` (default) or `service`.
 5. Resolve exposure mode:
@@ -92,10 +95,10 @@ Tailnet/private service mode on local daemon:
 portal 8080 --listen-mode service --service-name svc:portal
 ```
 
-Tailnet/private service mode on tsnet:
+Tailnet/private service mode through Portal's isolated node:
 
 ```bash
-portal 8080 --force-tsnet --listen-mode service --service-name svc:portal
+portal serve node 8080 --listen-mode service --service-name svc:portal
 ```
 
 Invalid mode combination:

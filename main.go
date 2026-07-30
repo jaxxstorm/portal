@@ -21,6 +21,7 @@ import (
 	"github.com/jaxxstorm/portal/internal/httputil"
 	"github.com/jaxxstorm/portal/internal/logging"
 	"github.com/jaxxstorm/portal/internal/model"
+	"github.com/jaxxstorm/portal/internal/oauthapp"
 	"github.com/jaxxstorm/portal/internal/proxy"
 	"github.com/jaxxstorm/portal/internal/server"
 	"github.com/jaxxstorm/portal/internal/startup"
@@ -43,6 +44,23 @@ func main() {
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+	if cfg.ConfigInit {
+		configPath, err := config.WriteConfigTemplate(cfg.ConfigInitForce)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Created configuration template at %s\n", configPath)
+		return
+	}
+	if len(cfg.OAuthAppArgs) > 0 {
+		_, err := oauthapp.Run(context.Background(), cfg.OAuthAppArgs, os.Stdout, os.Stderr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	// Handle version flag
@@ -144,8 +162,9 @@ func main() {
 				logging.TailscaleMode("local_daemon"),
 			)
 		} else {
-			logger.Info(logging.MsgTailscaleNotAvailable,
-				logging.Status("falling_back_to_tsnet"),
+			logger.Fatal(logging.MsgTailscaleNotAvailable,
+				logging.Status("local_daemon_required"),
+				zap.String("remediation", "start tailscaled or run portal serve node (or portal mock node)"),
 			)
 		}
 	}
@@ -160,7 +179,7 @@ func main() {
 	if cfg.ForceTsnet {
 		logger.Info(logging.MsgTailscaleConfiguration,
 			logging.TailscaleMode("tsnet"),
-			logging.Status("forced"),
+			logging.Status("isolated_node_selected"),
 		)
 	}
 
@@ -182,8 +201,18 @@ func main() {
 	}
 
 	var authorizer proxy.Authorizer
-	if cfg.AuthMode == config.AuthModeBasic {
+	switch cfg.AuthMode {
+	case config.AuthModeBasic:
 		authorizer = proxy.NewBasicAuthorizer(cfg.AuthUsername, cfg.AuthPassword)
+	case config.AuthModeTailscale:
+		authorizer = proxy.NewTailscaleAuthorizer(proxy.TailscaleAuthorizationConfig{
+			ClientID:      cfg.TailscaleOAuthClientID,
+			ClientSecret:  cfg.TailscaleOAuthClientSecret,
+			SessionSecret: cfg.TailscaleSessionSecret,
+			MountPath:     cfg.GetSetPath(),
+			Secure:        cfg.UseHTTPS,
+			Logger:        logger,
+		})
 	}
 
 	proxyConfig := proxy.Config{

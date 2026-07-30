@@ -11,7 +11,7 @@ const basicAuthRealm = `Basic realm="portal"`
 // Authorizer determines whether an incoming request may reach a backend.
 // Implementations can support additional providers without changing Server.
 type Authorizer interface {
-	Authorize(*http.Request) bool
+	Authorize(http.ResponseWriter, *http.Request) bool
 }
 
 type basicAuthorizer struct {
@@ -24,9 +24,11 @@ func NewBasicAuthorizer(username, password string) Authorizer {
 	return basicAuthorizer{username: username, password: password}
 }
 
-func (a basicAuthorizer) Authorize(r *http.Request) bool {
+func (a basicAuthorizer) Authorize(w http.ResponseWriter, r *http.Request) bool {
 	username, password, ok := r.BasicAuth()
 	if !ok {
+		w.Header().Set("WWW-Authenticate", basicAuthRealm)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
 
@@ -36,5 +38,10 @@ func (a basicAuthorizer) Authorize(r *http.Request) bool {
 	providedPassword := sha256.Sum256([]byte(password))
 	usernameMatches := subtle.ConstantTimeCompare(providedUsername[:], expectedUsername[:]) == 1
 	passwordMatches := subtle.ConstantTimeCompare(providedPassword[:], expectedPassword[:]) == 1
-	return usernameMatches && passwordMatches
+	if usernameMatches && passwordMatches {
+		return true
+	}
+	w.Header().Set("WWW-Authenticate", basicAuthRealm)
+	http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	return false
 }

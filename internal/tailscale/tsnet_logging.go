@@ -11,6 +11,16 @@ import (
 )
 
 func newTSNetRuntimeLogAdapter(logger *zap.Logger, nodeName string) func(format string, args ...any) {
+	return newTSNetLogAdapter(logger, nodeName, true)
+}
+
+// newTSNetUserLogAdapter preserves tsnet's user-facing authentication and
+// status messages even when verbose runtime diagnostics are disabled.
+func newTSNetUserLogAdapter(logger *zap.Logger, nodeName string) func(format string, args ...any) {
+	return newTSNetLogAdapter(logger, nodeName, false)
+}
+
+func newTSNetLogAdapter(logger *zap.Logger, nodeName string, runtimeOnly bool) func(format string, args ...any) {
 	verboseEnabled := logger.Core().Enabled(zapcore.DebugLevel)
 	runtimeLogger := logger.WithOptions(zap.AddStacktrace(zapcore.PanicLevel))
 
@@ -29,8 +39,8 @@ func newTSNetRuntimeLogAdapter(logger *zap.Logger, nodeName string) func(format 
 		}
 
 		// Underlying tsnet runtime logs are debug-only noise for normal runs.
-		// Surface them only when verbose mode enables debug-level logging.
-		if !verboseEnabled {
+		// UserLogf is reserved by tsnet for authentication and status feedback.
+		if runtimeOnly && !verboseEnabled {
 			return
 		}
 

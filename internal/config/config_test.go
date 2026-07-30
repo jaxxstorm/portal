@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 func TestMain(m *testing.M) {
@@ -708,6 +709,89 @@ func TestParseArgsAuthorizationValidation(t *testing.T) {
 	}
 }
 
+func TestParseArgsLoadsTailscaleAuthorizationFromEnvironment(t *testing.T) {
+	t.Setenv("PORTAL_PORT", "8080")
+	t.Setenv("PORTAL_AUTH_MODE", "tailscale")
+	t.Setenv("PORTAL_TAILSCALE_OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("PORTAL_TAILSCALE_OAUTH_CLIENT_SECRET", "client-secret")
+	t.Setenv("PORTAL_TAILSCALE_SESSION_SECRET", "session-secret")
+
+	cfg, err := ParseArgs(nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got, want := cfg.AuthMode, AuthModeTailscale; got != want {
+		t.Fatalf("expected auth mode %q, got %q", want, got)
+	}
+	if !cfg.UseHTTPS {
+		t.Fatalf("expected Tailscale login to enable HTTPS for secure session cookies")
+	}
+}
+
+func TestParseArgsTailscaleAuthorizationCLIOverridesEnvironmentAndConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeConfigFile(t, home, `
+port: 8080
+auth-mode: tailscale
+tailscale-oauth-client-id: config-client
+tailscale-oauth-client-secret: config-secret
+tailscale-session-secret: config-session
+`)
+	t.Setenv("PORTAL_TAILSCALE_OAUTH_CLIENT_ID", "env-client")
+
+	cfg, err := ParseArgs([]string{"--tailscale-oauth-client-id", "cli-client"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got, want := cfg.TailscaleOAuthClientID, "cli-client"; got != want {
+		t.Fatalf("expected client ID %q, got %q", want, got)
+	}
+}
+
+func TestParseArgsTailscaleAuthorizationValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing client ID",
+			args: []string{"8080", "--auth-mode", "tailscale", "--tailscale-oauth-client-secret", "secret", "--tailscale-session-secret", "session"},
+			want: "tailscale-oauth-client-id is required",
+		},
+		{
+			name: "missing client secret",
+			args: []string{"8080", "--auth-mode", "tailscale", "--tailscale-oauth-client-id", "id", "--tailscale-session-secret", "session"},
+			want: "tailscale-oauth-client-secret is required",
+		},
+		{
+			name: "missing session secret",
+			args: []string{"8080", "--auth-mode", "tailscale", "--tailscale-oauth-client-id", "id", "--tailscale-oauth-client-secret", "secret"},
+			want: "tailscale-session-secret is required",
+		},
+		{
+			name: "credentials without tailscale mode",
+			args: []string{"8080", "--tailscale-oauth-client-id", "id"},
+			want: "Tailscale OAuth credentials require auth-mode=tailscale",
+		},
+		{
+			name: "basic credentials cannot be combined",
+			args: []string{"8080", "--auth-mode", "tailscale", "--auth-username", "alice", "--tailscale-oauth-client-id", "id", "--tailscale-oauth-client-secret", "secret", "--tailscale-session-secret", "session"},
+			want: "cannot be combined with auth-mode=tailscale",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseArgs(tt.args)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
 func TestParseArgsRejectsMockWithPortAcrossSources(t *testing.T) {
 	t.Setenv("PORTAL_MOCK", "true")
 	t.Setenv("PORTAL_PORT", "8080")
@@ -760,6 +844,159 @@ func TestParseArgsHelpReturnsHelpError(t *testing.T) {
 	_, err := ParseArgs([]string{"--help"})
 	if !errors.Is(err, pflag.ErrHelp) {
 		t.Fatalf("expected pflag.ErrHelp, got %v", err)
+	}
+}
+
+func TestParseArgsCommandOrientedServing(t *testing.T) {
+	serve, err := ParseArgs([]string{"serve", "8080"})
+	if err != nil {
+		t.Fatalf("serve command: %v", err)
+	}
+	if got, want := serve.Port, 8080; got != want || serve.Mock || serve.Funnel {
+		t.Fatalf("unexpected serve config: %+v", serve)
+	}
+
+	t.Setenv("PORTAL_PORT", "8080")
+	mock, err := ParseArgs([]string{"mock"})
+	if err != nil {
+		t.Fatalf("mock command: %v", err)
+	}
+	if !mock.Mock || mock.Port != 0 || mock.Funnel {
+		t.Fatalf("unexpected mock config: %+v", mock)
+	}
+}
+
+func TestParseArgsNodeCommandsSelectIsolatedTailscaleNode(t *testing.T) {
+	serve, err := ParseArgs([]string{"serve", "node", "8080", "--device-name", "portal-test"})
+	if err != nil {
+		t.Fatalf("serve node command: %v", err)
+	}
+	if !serve.ForceTsnet || serve.Mock || serve.Port != 8080 || serve.TailscaleName != "portal-test" {
+		t.Fatalf("unexpected serve node config: %+v", serve)
+	}
+
+	mock, err := ParseArgs([]string{"mock", "node"})
+	if err != nil {
+		t.Fatalf("mock node command: %v", err)
+	}
+	if !mock.ForceTsnet || !mock.Mock || mock.Port != 0 {
+		t.Fatalf("unexpected mock node config: %+v", mock)
+	}
+}
+
+func TestCommandOrientedHelpHidesAdvancedFlags(t *testing.T) {
+	cmd, err := newRootCommand(viper.New(), &parseState{}, commandArgs{serve: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"auth-key", deviceNameKey, listenModeKey, "set-path", "serve-port", "ui-port", "auth-password", "tailscale-session-secret"} {
+		flag := cmd.Flags().Lookup(name)
+		if flag == nil || !flag.Hidden {
+			t.Fatalf("expected %q to be hidden from serve help", name)
+		}
+	}
+	if flag := cmd.Flags().Lookup("funnel"); flag == nil || flag.Hidden {
+		t.Fatalf("expected funnel to remain visible in serve help")
+	}
+}
+
+func TestPublicCommandHelpScopesFlags(t *testing.T) {
+	root := newCommandHelpRoot()
+	if root.Flags().Lookup("funnel") != nil || root.Flags().Lookup("auth-key") != nil {
+		t.Fatalf("expected root help to contain no serving flags")
+	}
+	if root.PersistentFlags().Lookup("version") == nil {
+		t.Fatalf("expected version to be the global flag")
+	}
+
+	serve, _, err := root.Find([]string{"serve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if serve.Flags().Lookup("funnel") == nil || serve.Flags().Lookup("auth-mode") == nil {
+		t.Fatalf("expected common serving flags")
+	}
+	if serve.Flags().Lookup("auth-key") != nil || serve.Flags().Lookup("serve-port") != nil {
+		t.Fatalf("expected advanced flags to stay out of public serve help")
+	}
+	node, _, err := root.Find([]string{"serve", "node"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Flags().Lookup("auth-key") == nil || node.Flags().Lookup(deviceNameKey) == nil {
+		t.Fatalf("expected isolated-node settings in node help")
+	}
+
+	cleanup, _, err := root.Find([]string{"cleanup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleanup.Flags().Lookup("funnel") != nil || cleanup.Flags().Lookup("auth-key") != nil {
+		t.Fatalf("cleanup should not expose serving flags")
+	}
+}
+
+func TestParseArgsMaintenanceCommandsSkipServingValidation(t *testing.T) {
+	t.Setenv("PORTAL_PORT", "-1")
+	cleanup, err := ParseArgs([]string{"cleanup"})
+	if err != nil {
+		t.Fatalf("cleanup command: %v", err)
+	}
+	if !cleanup.CleanupServe {
+		t.Fatalf("expected cleanup command to set CleanupServe")
+	}
+
+	init, err := ParseArgs([]string{"config", "init", "--force"})
+	if err != nil {
+		t.Fatalf("config init command: %v", err)
+	}
+	if !init.ConfigInit || !init.ConfigInitForce {
+		t.Fatalf("unexpected config init command: %+v", init)
+	}
+
+	oauthApp, err := ParseArgs([]string{"oauth-app", "create", "--help"})
+	if err != nil {
+		t.Fatalf("oauth-app command: %v", err)
+	}
+	if got, want := oauthApp.OAuthAppArgs, []string{"oauth-app", "create", "--help"}; !slices.Equal(got, want) {
+		t.Fatalf("unexpected OAuth App args: got %#v want %#v", got, want)
+	}
+}
+
+func TestWriteConfigTemplate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	configPath, err := WriteConfigTemplate(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "funnel: false") || strings.Contains(string(contents), "tailscale-oauth-client-secret: \"tskey") {
+		t.Fatalf("unexpected template contents: %s", contents)
+	}
+	if info, err := os.Stat(configPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("expected user-only config file permissions, info=%v err=%v", info, err)
+	}
+
+	if _, err := WriteConfigTemplate(false); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected overwrite protection error, got %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("port: 9999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteConfigTemplate(true); err != nil {
+		t.Fatal(err)
+	}
+	contents, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "port: 8080") {
+		t.Fatalf("force did not replace template: %s", contents)
 	}
 }
 

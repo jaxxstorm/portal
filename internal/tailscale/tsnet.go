@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -58,11 +60,13 @@ type funnelClientIPContextKey struct{}
 
 // NewTSNetServer creates a new tsnet server with structured logging
 func NewTSNetServer(config TSNetConfig, logger *zap.Logger) *TSNetServer {
+	stateDir := portalTSNetStateDir(config.Hostname)
 	server := &tsnet.Server{
 		Hostname: config.Hostname,
 		AuthKey:  config.AuthKey,
+		Dir:      stateDir,
 		Logf:     newTSNetRuntimeLogAdapter(logger, config.Hostname),
-		UserLogf: newTSNetRuntimeLogAdapter(logger, config.Hostname),
+		UserLogf: newTSNetUserLogAdapter(logger, config.Hostname),
 	}
 
 	logger.Info("Creating TSNet server",
@@ -74,6 +78,7 @@ func NewTSNetServer(config TSNetConfig, logger *zap.Logger) *TSNetServer {
 		logging.FunnelEnabled(config.EnableFunnel),
 		logging.HTTPSEnabled(config.UseHTTPS),
 		logging.ServePort(resolveTSNetServePort(config)),
+		zap.String("state_dir", stateDir),
 		zap.String("listen_mode", normalizeTSNetListenMode(config.ListenMode)),
 		zap.String("service_name", strings.TrimSpace(config.ServiceName)),
 	)
@@ -83,6 +88,18 @@ func NewTSNetServer(config TSNetConfig, logger *zap.Logger) *TSNetServer {
 		logger: logger,
 		config: config,
 	}
+}
+
+func portalTSNetStateDir(hostname string) string {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		hostname = "portal"
+	}
+	return filepath.Join(configDir, "portal", "tsnet", hostname)
 }
 
 // Listen creates a listener on the tsnet server
@@ -177,6 +194,7 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 	port, useTLS := ts.serveSettings()
 	addr := fmt.Sprintf(":%d", port)
 	if err := validateTSNetServeConfig(ts.config, port, useTLS); err != nil {
+		certificateStatus, funnelStatus := ts.funnelReadinessStatus(false)
 		ts.logger.Error("Invalid TSNet serve configuration",
 			logging.Component("tsnet_server"),
 			logging.TailscaleMode("tsnet"),
@@ -184,6 +202,8 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 			logging.FunnelEnabled(ts.config.EnableFunnel),
 			logging.HTTPSEnabled(useTLS),
 			logging.ServePort(port),
+			zap.String("certificate_status", certificateStatus),
+			zap.String("funnel_status", funnelStatus),
 			logging.Error(err),
 		)
 		return err
@@ -201,6 +221,14 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 		zap.String("effective_listen_mode", effectiveMode),
 		zap.String("service_name", strings.TrimSpace(ts.config.ServiceName)),
 	)
+
+	// Bring the tsnet node online before configuring its listener. ListenFunnel
+	// also starts tsnet implicitly, but doing it explicitly makes registration
+	// failures visible through the primary startup logs.
+	serviceURL, err := ts.Start(ctx)
+	if err != nil {
+		return err
+	}
 
 	ln, serviceFQDN, serviceName, err := ts.listenForServe(addr, port, useTLS, effectiveMode)
 	if err != nil {
@@ -222,11 +250,6 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 		}),
 	}
 
-	// Start the device
-	serviceURL, err := ts.Start(ctx)
-	if err != nil {
-		return err
-	}
 	if effectiveMode == TSNetListenModeService && serviceFQDN != "" {
 		serviceURL = buildTSNetServiceURL(serviceFQDN, port, useTLS)
 	}
@@ -239,6 +262,7 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 		ServiceFQDN:          serviceFQDN,
 	})
 
+	certificateStatus, funnelStatus := ts.funnelReadinessStatus(true)
 	ts.logger.Info("TSNet HTTP server ready to serve",
 		logging.Component("tsnet_server"),
 		logging.TailscaleMode("tsnet"),
@@ -248,6 +272,8 @@ func (ts *TSNetServer) Serve(ctx context.Context, handler http.Handler) error {
 		logging.FunnelEnabled(ts.config.EnableFunnel),
 		logging.HTTPSEnabled(useTLS),
 		logging.Status("serving"),
+		zap.String("certificate_status", certificateStatus),
+		zap.String("funnel_status", funnelStatus),
 		zap.String("configured_listen_mode", configuredMode),
 		zap.String("effective_listen_mode", effectiveMode),
 		zap.String("service_name", serviceName),
@@ -336,6 +362,7 @@ func (ts *TSNetServer) listenForServe(addr string, port int, useTLS bool, effect
 	}
 
 	if err != nil {
+		certificateStatus, funnelStatus := ts.funnelReadinessStatus(false)
 		ts.logger.Error("Failed to create TSNet listener",
 			logging.Component("tsnet_server"),
 			logging.TailscaleMode("tsnet"),
@@ -346,6 +373,8 @@ func (ts *TSNetServer) listenForServe(addr string, port int, useTLS bool, effect
 			logging.HTTPSEnabled(useTLS),
 			zap.String("effective_listen_mode", effectiveMode),
 			zap.String("service_name", serviceName),
+			zap.String("certificate_status", certificateStatus),
+			zap.String("funnel_status", funnelStatus),
 			logging.Error(err),
 		)
 		return nil, "", serviceName, err
@@ -365,6 +394,16 @@ func (ts *TSNetServer) listenForServe(addr string, port int, useTLS bool, effect
 	)
 
 	return ln, serviceFQDN, serviceName, nil
+}
+
+func (ts *TSNetServer) funnelReadinessStatus(ready bool) (certificateStatus, funnelStatus string) {
+	if !ts.config.EnableFunnel {
+		return "not_required", "disabled"
+	}
+	if ready {
+		return "verified", "ready"
+	}
+	return "not_verified", "failed"
 }
 
 func (ts *TSNetServer) serveSettings() (port int, useTLS bool) {

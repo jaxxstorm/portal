@@ -12,7 +12,7 @@ portal behavior is the combination of three dimensions:
 - exposure: `tailnet` or `funnel`
 
 Defaults:
-- backend: local daemon when available, otherwise tsnet
+- backend: local daemon; Portal exits if tailscaled is unavailable
 - backend mode: proxy
 - listen mode: listener
 - exposure: tailnet
@@ -20,11 +20,10 @@ Defaults:
 ## Backend Selection
 
 Backend is selected in this order:
-1. If `--force-tsnet` is set, use `tsnet`.
-2. If `--auth-key` is set, use `tsnet`.
-3. Otherwise, try local tailscaled:
-   - available -> `local-daemon`
-   - unavailable -> `tsnet`
+1. `portal serve node` or `portal mock node` uses Portal's isolated `tsnet` node.
+2. The legacy `--force-tsnet` and `--auth-key` inputs also select `tsnet`.
+3. Otherwise, Portal requires the local tailscaled daemon. If it is unavailable,
+   Portal exits and tells the operator to start tailscaled or select `node`.
 
 ## Compatibility Matrix
 
@@ -47,50 +46,62 @@ Constraint:
 Tailnet/private listener mode (default):
 
 ```bash
-portal 8080
+portal serve 8080
 ```
 
-Tailnet/private listener mode on tsnet:
+Tailnet/private listener mode through Portal's isolated node:
 
 ```bash
-portal 8080 --force-tsnet
+portal serve node 8080
 ```
 
 Tailnet/private service mode on local daemon:
 
 ```bash
-portal 8080 --listen-mode service --service-name svc:portal
+portal serve 8080 --listen-mode service --service-name svc:portal
 ```
 
-Tailnet/private service mode on tsnet:
+Tailnet/private service mode through Portal's isolated node:
 
 ```bash
-portal 8080 --force-tsnet --listen-mode service --service-name svc:portal
+portal serve node 8080 --listen-mode service --service-name svc:portal
 ```
 
 Mock backend on tailnet/private exposure (default):
 
 ```bash
-portal --mock
+portal mock
 ```
 
 Mock backend with explicit public Funnel exposure:
 
 ```bash
-portal --mock --funnel
+portal mock --funnel
+```
+
+Mock backend through Portal's isolated node:
+
+```bash
+portal mock node
 ```
 
 Public funnel mode:
 
 ```bash
-portal 8080 --funnel
+portal serve 8080 --funnel
 ```
 
 Invalid combination:
 
 ```bash
-portal 8080 --listen-mode service --funnel
+portal serve 8080 --listen-mode service --funnel
 ```
+
+`portal 8080`, `portal --mock`, and `portal --cleanup-serve` remain supported
+for existing scripts. `--force-tsnet` and `--auth-key` are also accepted for
+existing scripts, but new commands should use `node`. Run `portal config init`
+to create a commented default configuration file before using `portal serve`
+without a port argument.
 
 ## Service Mode Notes
 

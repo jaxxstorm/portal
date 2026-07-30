@@ -1,6 +1,20 @@
 package tailscale
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestPortalTSNetStateDirUsesPortalConfigDirectory(t *testing.T) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("UserConfigDir: %v", err)
+	}
+	if got, want := portalTSNetStateDir("portal-test"), filepath.Join(configDir, "portal", "tsnet", "portal-test"); got != want {
+		t.Fatalf("unexpected state directory: got %q want %q", got, want)
+	}
+}
 
 func TestResolveTSNetServePort(t *testing.T) {
 	tests := []struct {

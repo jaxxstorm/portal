@@ -46,10 +46,16 @@ func TestLogStartupSummaryEmitsStructuredJSON(t *testing.T) {
 	if got, want := payload["message"], logging.MsgStartupReady; got != want {
 		t.Fatalf("unexpected message: got %v want %q", got, want)
 	}
-	for _, key := range []string{"readiness", "mode", "backend_mode", "exposure", "service_url", "web_ui_status", "web_ui_reason", "capability_funnel", "tsnet_listen_mode_configured", "tsnet_listen_mode_effective"} {
+	for _, key := range []string{"readiness", "mode", "backend_mode", "exposure", "service_url", "certificate_status", "funnel_status", "web_ui_status", "web_ui_reason", "capability_funnel", "tsnet_listen_mode_configured", "tsnet_listen_mode_effective"} {
 		if _, ok := payload[key]; !ok {
 			t.Fatalf("expected key %q in startup payload", key)
 		}
+	}
+	if got, want := payload["certificate_status"], startup.CertificateStatusVerified; got != want {
+		t.Fatalf("unexpected certificate status: got %v want %q", got, want)
+	}
+	if got, want := payload["funnel_status"], startup.FunnelStatusReady; got != want {
+		t.Fatalf("unexpected funnel status: got %v want %q", got, want)
 	}
 }
 

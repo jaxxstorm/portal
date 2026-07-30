@@ -36,3 +36,36 @@ func TestEmitReadySkipsEmptyURL(t *testing.T) {
 		t.Fatalf("expected callback to be skipped for empty URL")
 	}
 }
+
+func TestTSNetFunnelReadinessStatus(t *testing.T) {
+	tests := []struct {
+		name                  string
+		enableFunnel          bool
+		ready                 bool
+		wantCertificateStatus string
+		wantFunnelStatus      string
+	}{
+		{
+			name: "tailnet", wantCertificateStatus: "not_required", wantFunnelStatus: "disabled",
+		},
+		{
+			name: "funnel ready", enableFunnel: true, ready: true, wantCertificateStatus: "verified", wantFunnelStatus: "ready",
+		},
+		{
+			name: "funnel failed", enableFunnel: true, wantCertificateStatus: "not_verified", wantFunnelStatus: "failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &TSNetServer{config: TSNetConfig{EnableFunnel: tt.enableFunnel}}
+			certificateStatus, funnelStatus := server.funnelReadinessStatus(tt.ready)
+			if got, want := certificateStatus, tt.wantCertificateStatus; got != want {
+				t.Fatalf("unexpected certificate status: got %q want %q", got, want)
+			}
+			if got, want := funnelStatus, tt.wantFunnelStatus; got != want {
+				t.Fatalf("unexpected funnel status: got %q want %q", got, want)
+			}
+		})
+	}
+}

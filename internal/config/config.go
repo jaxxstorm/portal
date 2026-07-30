@@ -19,6 +19,7 @@ const (
 	TSNetListenModeService  = "service"
 	AuthModeNone            = "none"
 	AuthModeBasic           = "basic"
+	AuthModeTailscale       = "tailscale"
 
 	deviceNameKey          = "device-name"
 	legacyTailscaleNameKey = "tailscale-name"
@@ -30,29 +31,35 @@ const (
 
 // Config holds the parsed and validated configuration
 type Config struct {
-	Port             int
-	TailscaleName    string
-	Funnel           bool
-	FunnelAllowlist  []netip.Prefix
-	Verbose          bool
-	JSON             bool
-	LogFile          string
-	AuthKey          string
-	ForceTsnet       bool
-	SetPath          string
-	ServePort        int
-	UseHTTPS         bool
-	NoTUI            bool
-	NoUI             bool
-	UIPort           int
-	Version          bool
-	Mock             bool
-	CleanupServe     bool
-	TSNetListenMode  string
-	TSNetServiceName string
-	AuthMode         string
-	AuthUsername     string
-	AuthPassword     string
+	Port                       int
+	TailscaleName              string
+	Funnel                     bool
+	FunnelAllowlist            []netip.Prefix
+	Verbose                    bool
+	JSON                       bool
+	LogFile                    string
+	AuthKey                    string
+	ForceTsnet                 bool
+	SetPath                    string
+	ServePort                  int
+	UseHTTPS                   bool
+	NoTUI                      bool
+	NoUI                       bool
+	UIPort                     int
+	Version                    bool
+	Mock                       bool
+	CleanupServe               bool
+	TSNetListenMode            string
+	TSNetServiceName           string
+	AuthMode                   string
+	AuthUsername               string
+	AuthPassword               string
+	TailscaleOAuthClientID     string
+	TailscaleOAuthClientSecret string
+	TailscaleSessionSecret     string
+	ConfigInit                 bool
+	ConfigInitForce            bool
+	OAuthAppArgs               []string
 }
 
 // Parse parses command line arguments and returns a validated configuration
@@ -63,13 +70,33 @@ func Parse() (*Config, error) {
 // ParseArgs parses command line arguments and returns a validated configuration.
 // Exposed for tests.
 func ParseArgs(args []string) (*Config, error) {
+	if commandHelpRequested(args) {
+		cmd := newCommandHelpRoot()
+		cmd.SetArgs(args)
+		_ = cmd.Execute()
+		return nil, pflag.ErrHelp
+	}
+	args, command, err := normalizeCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if command.configInit {
+		return &Config{ConfigInit: true, ConfigInitForce: command.configInitForce}, nil
+	}
+	if command.cleanup {
+		return &Config{CleanupServe: true}, nil
+	}
+	if command.oauthApp {
+		return &Config{OAuthAppArgs: command.oauthAppArgs}, nil
+	}
+
 	v := viper.New()
 	if err := configureViper(v); err != nil {
 		return nil, err
 	}
 
 	state := &parseState{}
-	cmd, err := newRootCommand(v, state)
+	cmd, err := newRootCommand(v, state, command)
 	if err != nil {
 		return nil, err
 	}
@@ -126,29 +153,39 @@ func ParseArgs(args []string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Port:             port,
-		TailscaleName:    deviceName,
-		Funnel:           v.GetBool("funnel"),
-		FunnelAllowlist:  funnelAllowlist,
-		Verbose:          v.GetBool("verbose"),
-		JSON:             v.GetBool("json"),
-		LogFile:          v.GetString("log-file"),
-		AuthKey:          v.GetString("auth-key"),
-		ForceTsnet:       v.GetBool("force-tsnet"),
-		SetPath:          v.GetString("set-path"),
-		ServePort:        v.GetInt("serve-port"),
-		UseHTTPS:         v.GetBool("use-https"),
-		NoTUI:            v.GetBool("no-tui"),
-		NoUI:             v.GetBool("no-ui"),
-		UIPort:           v.GetInt("ui-port"),
-		Version:          v.GetBool("version"),
-		Mock:             v.GetBool("mock"),
-		CleanupServe:     v.GetBool("cleanup-serve"),
-		TSNetListenMode:  listenMode,
-		TSNetServiceName: serviceName,
-		AuthMode:         authMode,
-		AuthUsername:     v.GetString("auth-username"),
-		AuthPassword:     v.GetString("auth-password"),
+		Port:                       port,
+		TailscaleName:              deviceName,
+		Funnel:                     v.GetBool("funnel"),
+		FunnelAllowlist:            funnelAllowlist,
+		Verbose:                    v.GetBool("verbose"),
+		JSON:                       v.GetBool("json"),
+		LogFile:                    v.GetString("log-file"),
+		AuthKey:                    v.GetString("auth-key"),
+		ForceTsnet:                 v.GetBool("force-tsnet"),
+		SetPath:                    v.GetString("set-path"),
+		ServePort:                  v.GetInt("serve-port"),
+		UseHTTPS:                   v.GetBool("use-https"),
+		NoTUI:                      v.GetBool("no-tui"),
+		NoUI:                       v.GetBool("no-ui"),
+		UIPort:                     v.GetInt("ui-port"),
+		Version:                    v.GetBool("version"),
+		Mock:                       v.GetBool("mock"),
+		CleanupServe:               v.GetBool("cleanup-serve"),
+		TSNetListenMode:            listenMode,
+		TSNetServiceName:           serviceName,
+		AuthMode:                   authMode,
+		AuthUsername:               v.GetString("auth-username"),
+		AuthPassword:               v.GetString("auth-password"),
+		TailscaleOAuthClientID:     v.GetString("tailscale-oauth-client-id"),
+		TailscaleOAuthClientSecret: v.GetString("tailscale-oauth-client-secret"),
+		TailscaleSessionSecret:     v.GetString("tailscale-session-secret"),
+	}
+	if command.node {
+		cfg.ForceTsnet = true
+	}
+	if command.mock {
+		cfg.Mock = true
+		cfg.Port = 0
 	}
 
 	// Handle version flag
@@ -186,10 +223,66 @@ func ParseArgs(args []string) (*Config, error) {
 	return cfg, nil
 }
 
+func commandHelpRequested(args []string) bool {
+	if len(args) == 1 {
+		return args[0] == "--help" || args[0] == "help"
+	}
+	if len(args) == 2 {
+		return args[1] == "--help" || args[1] == "-h"
+	}
+	if len(args) == 3 {
+		isHelp := args[2] == "--help" || args[2] == "-h"
+		return (args[0] == "config" && args[1] == "init" && isHelp) ||
+			((args[0] == "serve" || args[0] == "mock") && args[1] == "node" && isHelp)
+	}
+	return false
+}
+
+func newCommandHelpRoot() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "portal",
+		Short: "Expose local services over Tailscale",
+		Long:  "Portal exposes local services over Tailscale. Tailnet-private exposure is the default; Funnel is explicitly public.",
+	}
+	root.PersistentFlags().Bool("version", false, "Show version information")
+	serveCmd := newCommandHelpServe("serve [port]", "Serve a local service through the local Tailscale daemon", false)
+	serveCmd.AddCommand(newCommandHelpServe("node [port]", "Serve a local service through Portal's isolated Tailscale node", true))
+	root.AddCommand(serveCmd)
+	mockCmd := newCommandHelpServe("mock", "Serve Portal's mock backend through the local Tailscale daemon", false)
+	mockCmd.AddCommand(newCommandHelpServe("node", "Serve Portal's mock backend through an isolated Tailscale node", true))
+	root.AddCommand(mockCmd)
+	root.AddCommand(&cobra.Command{Use: "cleanup", Short: "Clear this node's Tailscale Serve configuration", Run: func(*cobra.Command, []string) {}})
+	configCmd := &cobra.Command{Use: "config", Short: "Manage Portal configuration"}
+	initCmd := &cobra.Command{Use: "init", Short: "Create a configuration template", Run: func(*cobra.Command, []string) {}}
+	initCmd.Flags().Bool("force", false, "Replace an existing configuration file")
+	configCmd.AddCommand(initCmd)
+	root.AddCommand(configCmd)
+	root.AddCommand(&cobra.Command{Use: "oauth-app", Short: "Create and configure Tailscale OAuth Apps", Run: func(*cobra.Command, []string) {}})
+	return root
+}
+
+func newCommandHelpServe(use, short string, node bool) *cobra.Command {
+	long := short + ".\n\nConfigure advanced UI, path, port, and credential settings in ~/.portal/config.yml or PORTAL_* environment variables."
+	cmd := &cobra.Command{Use: use, Short: short, Long: long, Run: func(*cobra.Command, []string) {}}
+	flags := cmd.Flags()
+	flags.BoolP("funnel", "f", false, "Enable Tailscale Funnel (public internet access)")
+	flags.String("auth-mode", AuthModeNone, "Endpoint authorization mode: none, basic, or tailscale")
+	if node {
+		flags.StringP("device-name", "n", "portal", "Name of Portal's isolated Tailscale node")
+		flags.String("auth-key", "", "Tailscale auth key for the isolated node")
+	}
+	flags.BoolP("verbose", "v", false, "Enable verbose logging")
+	flags.BoolP("json", "j", false, "Output logs in JSON format")
+	flags.String("log-file", "", "Log file path")
+	flags.Bool("no-tui", false, "Disable the terminal UI")
+	flags.Bool("no-ui", false, "Disable the web UI dashboard")
+	return cmd
+}
+
 // applyAutoConfiguration applies automatic configuration rules
 func (c *Config) applyAutoConfiguration() {
-	// If funnel is enabled, automatically enable HTTPS since funnel requires it.
-	if c.Funnel {
+	// Funnel and browser login both require HTTPS for secure cookies and callbacks.
+	if c.Funnel || c.AuthMode == AuthModeTailscale {
 		c.UseHTTPS = true
 	}
 }
@@ -252,13 +345,137 @@ type parseState struct {
 	portSet bool
 }
 
-func configureViper(v *viper.Viper) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to determine home directory: %w", err)
+type commandArgs struct {
+	serve           bool
+	mock            bool
+	node            bool
+	cleanup         bool
+	configInit      bool
+	configInitForce bool
+	oauthApp        bool
+	oauthAppArgs    []string
+}
+
+func normalizeCommandArgs(args []string) ([]string, commandArgs, error) {
+	if len(args) == 0 {
+		return args, commandArgs{}, nil
 	}
 
-	configPath := filepath.Join(homeDir, ".portal", "config.yml")
+	switch args[0] {
+	case "serve":
+		args, node := normalizeNodeArgs(args[1:])
+		return args, commandArgs{serve: true, node: node}, nil
+	case "mock":
+		args, node := normalizeNodeArgs(args[1:])
+		return append([]string{"--mock"}, args...), commandArgs{mock: true, node: node}, nil
+	case "cleanup":
+		if len(args) != 1 {
+			return nil, commandArgs{}, fmt.Errorf("cleanup does not accept arguments")
+		}
+		return nil, commandArgs{cleanup: true}, nil
+	case "oauth-app":
+		return nil, commandArgs{oauthApp: true, oauthAppArgs: args}, nil
+	case "config":
+		if len(args) < 2 || args[1] != "init" {
+			return nil, commandArgs{}, fmt.Errorf("usage: portal config init [--force]")
+		}
+		if len(args) > 3 || (len(args) == 3 && args[2] != "--force") {
+			return nil, commandArgs{}, fmt.Errorf("usage: portal config init [--force]")
+		}
+		return nil, commandArgs{configInit: true, configInitForce: len(args) == 3}, nil
+	default:
+		return args, commandArgs{}, nil
+	}
+}
+
+func normalizeNodeArgs(args []string) ([]string, bool) {
+	if len(args) > 0 && args[0] == "node" {
+		return args[1:], true
+	}
+	return args, false
+}
+
+// DefaultConfigPath returns Portal's default configuration file location.
+func DefaultConfigPath() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to determine home directory: %w", err)
+	}
+	return filepath.Join(homeDir, ".portal", "config.yml"), nil
+}
+
+const configTemplate = `# Portal configuration. CLI flags override environment values, which override this file.
+# Keep secrets in a secret manager or PORTAL_* environment variables.
+
+# Local service port for "portal serve". Remove or change as needed.
+# Plain serve and mock commands require the local tailscaled daemon.
+port: 8080
+
+# Tailnet-private by default. Set true only to enable public Tailscale Funnel.
+funnel: false
+
+# Optional Funnel source allowlist.
+funnel-allowlist: []
+
+# Tailscale serving settings. Use "portal serve node" or "portal mock node"
+# to create an isolated Tailscale node with these settings.
+device-name: portal
+listen-mode: listener
+service-name: svc:portal
+# auth-key: ""
+# serve-port: 0
+# set-path: /
+# use-https: false
+
+# Runtime output settings.
+# no-tui: false
+# no-ui: false
+# ui-port: 0
+# json: false
+# verbose: false
+
+# Endpoint authorization. Use environment variables for credentials.
+auth-mode: none
+# auth-username: ""
+# auth-password: ""
+# tailscale-oauth-client-id: ""
+# tailscale-oauth-client-secret: ""
+# tailscale-session-secret: ""
+`
+
+// WriteConfigTemplate creates the default configuration template without
+// persisting credentials.
+func WriteConfigTemplate(force bool) (string, error) {
+	configPath, err := DefaultConfigPath()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		return "", fmt.Errorf("creating configuration directory: %w", err)
+	}
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if force {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	file, err := os.OpenFile(configPath, flags, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return "", fmt.Errorf("configuration file %s already exists; rerun with --force to replace it", configPath)
+		}
+		return "", fmt.Errorf("creating configuration template: %w", err)
+	}
+	defer file.Close()
+	if _, err := file.WriteString(configTemplate); err != nil {
+		return "", fmt.Errorf("writing configuration template: %w", err)
+	}
+	return configPath, nil
+}
+
+func configureViper(v *viper.Viper) error {
+	configPath, err := DefaultConfigPath()
+	if err != nil {
+		return err
+	}
 	v.SetConfigFile(configPath)
 	v.SetConfigType("yaml")
 	v.SetEnvPrefix("PORTAL")
@@ -279,10 +496,25 @@ func configureViper(v *viper.Viper) error {
 	return nil
 }
 
-func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
+func newRootCommand(v *viper.Viper, state *parseState, command commandArgs) (*cobra.Command, error) {
+	use := "portal [port]"
+	short := "Expose local services over Tailscale"
+	if command.serve {
+		use = "portal serve [port]"
+		short = "Serve a local service over Tailscale"
+	}
+	if command.mock {
+		use = "portal mock"
+		short = "Serve Portal's mock backend over Tailscale"
+	}
+	long := "Portal exposes local services over Tailscale.\n\nCommands:\n  portal serve [port]   Serve a local service\n  portal mock           Serve the mock backend\n  portal oauth-app      Create a Tailscale OAuth App\n  portal cleanup        Clear Tailscale Serve configuration\n  portal config init    Create a configuration template"
+	if command.serve || command.mock {
+		long = short + ".\n\nCommon runtime flags are shown below. Configure advanced tsnet, UI, path, port, and credential settings in ~/.portal/config.yml or PORTAL_* environment variables."
+	}
 	cmd := &cobra.Command{
-		Use:   "portal [port]",
-		Short: "Expose local services over Tailscale",
+		Use:   use,
+		Short: short,
+		Long:  long,
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -322,9 +554,35 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 	flags.String(serviceNameKey, "", "Service name used when listen-mode=service (default: svc:portal; requires tagged host identity)")
 	flags.String(legacyListenModeKey, "", "Deprecated alias for --listen-mode")
 	flags.String(legacyServiceNameKey, "", "Deprecated alias for --service-name")
-	flags.String("auth-mode", AuthModeNone, "Endpoint authorization mode: none or basic")
+	flags.String("auth-mode", AuthModeNone, "Endpoint authorization mode: none, basic, or tailscale")
 	flags.String("auth-username", "", "HTTP Basic authorization username")
 	flags.String("auth-password", "", "HTTP Basic authorization password")
+	flags.String("tailscale-oauth-client-id", "", "Tailscale OAuth App client ID")
+	flags.String("tailscale-oauth-client-secret", "", "Tailscale OAuth App client secret")
+	flags.String("tailscale-session-secret", "", "Secret used to sign Tailscale login sessions")
+	if command.serve || command.mock {
+		_ = flags.MarkHidden("cleanup-serve")
+	}
+	if command.serve || command.mock {
+		_ = flags.MarkHidden("mock")
+		for _, name := range []string{
+			"auth-key",
+			deviceNameKey,
+			listenModeKey,
+			serviceNameKey,
+			"set-path",
+			"serve-port",
+			"use-https",
+			"ui-port",
+			"auth-username",
+			"auth-password",
+			"tailscale-oauth-client-id",
+			"tailscale-oauth-client-secret",
+			"tailscale-session-secret",
+		} {
+			_ = flags.MarkHidden(name)
+		}
+	}
 	_ = flags.MarkDeprecated(legacyTailscaleNameKey, "use --device-name instead")
 	_ = flags.MarkDeprecated(legacyListenModeKey, "use --listen-mode instead")
 	_ = flags.MarkDeprecated(legacyServiceNameKey, "use --service-name instead")
@@ -359,6 +617,9 @@ func newRootCommand(v *viper.Viper, state *parseState) (*cobra.Command, error) {
 		"auth-mode",
 		"auth-username",
 		"auth-password",
+		"tailscale-oauth-client-id",
+		"tailscale-oauth-client-secret",
+		"tailscale-session-secret",
 	}
 
 	for _, key := range keys {
@@ -482,13 +743,22 @@ func (c *Config) validateTSNetServiceConfig() error {
 }
 
 func (c *Config) validateAuthorizationConfig() error {
+	hasBasicCredentials := strings.TrimSpace(c.AuthUsername) != "" || c.AuthPassword != ""
+	hasTailscaleCredentials := strings.TrimSpace(c.TailscaleOAuthClientID) != "" || c.TailscaleOAuthClientSecret != "" || c.TailscaleSessionSecret != ""
+
 	switch c.AuthMode {
 	case AuthModeNone:
-		if strings.TrimSpace(c.AuthUsername) != "" || c.AuthPassword != "" {
+		if hasBasicCredentials {
 			return fmt.Errorf("auth-username and auth-password require auth-mode=basic")
+		}
+		if hasTailscaleCredentials {
+			return fmt.Errorf("Tailscale OAuth credentials require auth-mode=tailscale")
 		}
 		return nil
 	case AuthModeBasic:
+		if hasTailscaleCredentials {
+			return fmt.Errorf("Tailscale OAuth credentials cannot be combined with auth-mode=basic")
+		}
 		if strings.TrimSpace(c.AuthUsername) == "" {
 			return fmt.Errorf("auth-username is required when auth-mode=basic")
 		}
@@ -496,7 +766,21 @@ func (c *Config) validateAuthorizationConfig() error {
 			return fmt.Errorf("auth-password is required when auth-mode=basic")
 		}
 		return nil
+	case AuthModeTailscale:
+		if hasBasicCredentials {
+			return fmt.Errorf("auth-username and auth-password cannot be combined with auth-mode=tailscale")
+		}
+		if strings.TrimSpace(c.TailscaleOAuthClientID) == "" {
+			return fmt.Errorf("tailscale-oauth-client-id is required when auth-mode=tailscale")
+		}
+		if c.TailscaleOAuthClientSecret == "" {
+			return fmt.Errorf("tailscale-oauth-client-secret is required when auth-mode=tailscale")
+		}
+		if c.TailscaleSessionSecret == "" {
+			return fmt.Errorf("tailscale-session-secret is required when auth-mode=tailscale")
+		}
+		return nil
 	default:
-		return fmt.Errorf("invalid auth-mode %q: must be %q or %q", c.AuthMode, AuthModeNone, AuthModeBasic)
+		return fmt.Errorf("invalid auth-mode %q: must be %q, %q, or %q", c.AuthMode, AuthModeNone, AuthModeBasic, AuthModeTailscale)
 	}
 }

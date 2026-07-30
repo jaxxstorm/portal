@@ -25,18 +25,32 @@ go build -o portal main.go
 ## Quick Start
 
 ```bash
+# Create a commented configuration template (optional)
+portal config init
+
 # Tailnet-only proxy to local service
-portal 8080
+portal serve 8080
+
+# Tailnet-only proxy through Portal's isolated Tailscale node
+portal serve node 8080
 
 # Public internet access with Funnel
-portal 8080 --funnel
+portal serve 8080 --funnel
 
 # Mock endpoint for webhook testing (tailnet-only by default)
-portal --mock
+portal mock
 
 # Mock endpoint with explicit public Funnel exposure
-portal --mock --funnel
+portal mock --funnel
+
+# Remove this node's Tailscale Serve configuration
+portal cleanup
 ```
+
+`portal 8080`, `portal --mock`, and `portal --cleanup-serve` remain supported
+for existing scripts. Plain `serve` and `mock` commands require the local
+tailscaled daemon; use `portal serve node` or `portal mock node` to run through
+Portal's isolated Tailscale node.
 
 ## Documentation
 

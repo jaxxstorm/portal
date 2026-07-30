@@ -28,6 +28,12 @@ func TestBuildReadySummaryTailnetIncludesWebUI(t *testing.T) {
 	if got, want := summary.Exposure, ExposureTailnet; got != want {
 		t.Fatalf("unexpected exposure: got %q want %q", got, want)
 	}
+	if got, want := summary.CertificateStatus, CertificateStatusNotRequired; got != want {
+		t.Fatalf("unexpected certificate status: got %q want %q", got, want)
+	}
+	if got, want := summary.FunnelStatus, FunnelStatusDisabled; got != want {
+		t.Fatalf("unexpected funnel status: got %q want %q", got, want)
+	}
 	if got, want := summary.WebUIStatus, WebUIStatusEnabled; got != want {
 		t.Fatalf("unexpected web UI status: got %q want %q", got, want)
 	}
@@ -58,6 +64,12 @@ func TestBuildReadySummaryFunnelMode(t *testing.T) {
 	}
 	if got, want := summary.Exposure, ExposureFunnel; got != want {
 		t.Fatalf("unexpected exposure: got %q want %q", got, want)
+	}
+	if got, want := summary.CertificateStatus, CertificateStatusVerified; got != want {
+		t.Fatalf("unexpected certificate status: got %q want %q", got, want)
+	}
+	if got, want := summary.FunnelStatus, FunnelStatusReady; got != want {
+		t.Fatalf("unexpected funnel status: got %q want %q", got, want)
 	}
 	if got, want := summary.WebUIStatus, WebUIStatusUnavailable; got != want {
 		t.Fatalf("unexpected web UI status: got %q want %q", got, want)
@@ -125,6 +137,8 @@ func TestSummaryFieldsExposeStableKeys(t *testing.T) {
 		"backend_mode",
 		"exposure",
 		"service_url",
+		"certificate_status",
+		"funnel_status",
 		"web_ui_status",
 		"capability_funnel",
 		"capability_ui",

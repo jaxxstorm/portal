@@ -14,6 +14,11 @@ import (
 const (
 	ReadinessReady = "ready"
 
+	CertificateStatusNotRequired = "not_required"
+	CertificateStatusVerified    = "verified"
+	FunnelStatusDisabled         = "disabled"
+	FunnelStatusReady            = "ready"
+
 	ModeLocalDaemon = "local_daemon"
 	ModeTSNet       = "tsnet"
 
@@ -49,15 +54,17 @@ type TSNetDetails struct {
 }
 
 type Summary struct {
-	Readiness   string
-	Mode        string
-	BackendMode string
-	Exposure    string
-	ServiceURL  string
-	LocalURL    string
-	WebUIStatus string
-	WebUIURL    string
-	WebUIReason string
+	Readiness         string
+	Mode              string
+	BackendMode       string
+	Exposure          string
+	ServiceURL        string
+	LocalURL          string
+	CertificateStatus string
+	FunnelStatus      string
+	WebUIStatus       string
+	WebUIURL          string
+	WebUIReason       string
 	TSNetDetails
 	Capabilities
 }
@@ -69,20 +76,26 @@ func BuildReadySummary(cfg *config.Config, useLocalDaemon bool, serviceURL, loca
 	}
 
 	exposure := ExposureTailnet
+	certificateStatus := CertificateStatusNotRequired
+	funnelStatus := FunnelStatusDisabled
 	if cfg.Funnel {
 		exposure = ExposureFunnel
+		certificateStatus = CertificateStatusVerified
+		funnelStatus = FunnelStatusReady
 	}
 
 	summary := Summary{
-		Readiness:   ReadinessReady,
-		Mode:        mode,
-		BackendMode: resolveBackendMode(cfg),
-		Exposure:    exposure,
-		ServiceURL:  strings.TrimSpace(serviceURL),
-		LocalURL:    strings.TrimSpace(localURL),
-		WebUIStatus: ResolveWebUIStatus(cfg.NoUI, webUIURL),
-		WebUIURL:    strings.TrimSpace(webUIURL),
-		WebUIReason: ResolveWebUIReason(cfg.NoUI, useLocalDaemon, webUIURL),
+		Readiness:         ReadinessReady,
+		Mode:              mode,
+		BackendMode:       resolveBackendMode(cfg),
+		Exposure:          exposure,
+		ServiceURL:        strings.TrimSpace(serviceURL),
+		LocalURL:          strings.TrimSpace(localURL),
+		CertificateStatus: certificateStatus,
+		FunnelStatus:      funnelStatus,
+		WebUIStatus:       ResolveWebUIStatus(cfg.NoUI, webUIURL),
+		WebUIURL:          strings.TrimSpace(webUIURL),
+		WebUIReason:       ResolveWebUIReason(cfg.NoUI, useLocalDaemon, webUIURL),
 		Capabilities: Capabilities{
 			Funnel:      cfg.Funnel,
 			Mock:        cfg.Mock,
@@ -184,6 +197,8 @@ func (s Summary) Fields() []zap.Field {
 		zap.String("backend_mode", s.BackendMode),
 		zap.String("exposure", s.Exposure),
 		zap.String("service_url", s.ServiceURL),
+		zap.String("certificate_status", s.CertificateStatus),
+		zap.String("funnel_status", s.FunnelStatus),
 		zap.String("web_ui_status", s.WebUIStatus),
 		zap.Bool("capability_funnel", s.Funnel),
 		zap.Bool("capability_mock", s.Mock),

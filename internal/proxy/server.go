@@ -340,12 +340,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) enforceAuthorization(w http.ResponseWriter, r *http.Request) bool {
-	if s.authorizer == nil || s.authorizer.Authorize(r) {
+	if s.authorizer == nil || s.authorizer.Authorize(w, r) {
 		return true
 	}
-
-	w.Header().Set("WWW-Authenticate", basicAuthRealm)
-	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	return false
 }
 

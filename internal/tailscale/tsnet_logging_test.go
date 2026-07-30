@@ -127,6 +127,20 @@ func TestTSNetUserLogsUseAdapterAndDoNotLeak(t *testing.T) {
 	assertStringField(t, entries[0].ContextMap(), "phase", "auth")
 }
 
+func TestTSNetUserLogsAreVisibleWithoutVerbose(t *testing.T) {
+	core, observed := observer.New(zapcore.InfoLevel)
+	logger := zap.New(core)
+
+	server := NewTSNetServer(TSNetConfig{Hostname: "portal"}, logger)
+	observed.TakeAll() // Drop construction log.
+
+	server.server.UserLogf("AuthLoop: state is Running; done")
+
+	if got := len(observed.All()); got != 1 {
+		t.Fatalf("expected user-facing tsnet status log without verbose mode, got %d", got)
+	}
+}
+
 func assertStringField(t *testing.T, fields map[string]interface{}, key, want string) {
 	t.Helper()
 

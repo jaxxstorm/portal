@@ -7,29 +7,33 @@ non-TUI execution modes.
 ## Requirements
 
 ### Requirement: Deterministic Startup Readiness Summary
-`portal` MUST emit a single startup-ready summary after the serving path is active, and the summary MUST include execution mode, backend mode, exposure type, service reachability URL, web UI status, and enabled capabilities.
+`portal` MUST emit a single startup-ready summary after the serving path is active, and the summary MUST include execution mode, backend mode, exposure type, service reachability URL, web UI status, enabled capabilities, certificate status, and Funnel status.
 
 #### Scenario: Tailnet mode startup summary is explicit
 - **WHEN** a user runs `portal <port>` with UI enabled
 - **THEN** portal emits one startup-ready summary with `backend_mode=proxy` and `exposure=tailnet`
 - **AND** the summary includes the reachable service URL
+- **AND** the summary includes `funnel_status=disabled` and `certificate_status=not_required`
 - **AND** the summary includes web UI status and URL (or explicit UI disabled/unavailable status)
 
 #### Scenario: Funnel mode startup summary is explicit
 - **WHEN** a user runs `portal <port> --funnel` and Funnel prerequisites are satisfied
 - **THEN** portal emits one startup-ready summary with `backend_mode=proxy` and `exposure=funnel`
 - **AND** the summary identifies public reachability
+- **AND** the summary includes the public service URL, `certificate_status=verified`, and `funnel_status=ready`
 - **AND** the summary includes enabled capability flags (including Funnel)
 
 #### Scenario: Mock mode startup summary separates backend and exposure
 - **WHEN** a user runs `portal --mock` without Funnel enabled
 - **THEN** portal emits one startup-ready summary with `backend_mode=mock` and `exposure=tailnet`
 - **AND** the summary does not indicate public reachability
+- **AND** the summary includes `funnel_status=disabled` and `certificate_status=not_required`
 
 #### Scenario: Mock mode with Funnel reports public exposure explicitly
 - **WHEN** a user runs `portal --mock --funnel` and Funnel prerequisites are satisfied
 - **THEN** portal emits one startup-ready summary with `backend_mode=mock` and `exposure=funnel`
 - **AND** the summary identifies public reachability
+- **AND** the summary includes the public service URL, `certificate_status=verified`, and `funnel_status=ready`
 
 ### Requirement: Startup Summary MUST Be Rendered Consistently Across Output Modes
 `portal` MUST render the same startup summary semantics across TUI, non-TUI text logging, and non-TUI JSON logging. In TUI mode, startup summary fields for service and Web UI reachability MUST be presented with dedicated labels and readable URL formatting.
@@ -60,5 +64,5 @@ non-TUI execution modes.
 
 #### Scenario: Funnel prerequisite failure blocks ready summary
 - **WHEN** a user runs `portal <port> --funnel` and HTTPS certificate or Funnel setup fails
-- **THEN** portal logs an explicit startup failure reason
+- **THEN** portal logs an explicit startup failure reason with a certificate or Funnel status that identifies the failed phase
 - **AND** portal does not emit a startup-ready summary

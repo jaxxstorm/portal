@@ -48,18 +48,53 @@ portal MUST provide `PORTAL_*` environment variable mappings for all supported r
 - **THEN** portal enables HTTP Basic authorization using those credentials
 
 ### Requirement: Authorization Configuration Validation
-portal MUST support `none` and `basic` authorization modes and MUST validate
-authorization configuration before serving. `basic` MUST require a non-empty
-username and password, while `none` MUST reject supplied authorization
-credentials.
+portal MUST support `none`, `basic`, and `tailscale` authorization modes and
+MUST validate authorization configuration before serving. `basic` MUST require a
+non-empty username and password. `tailscale` MUST require non-empty Tailscale
+OAuth client ID, OAuth client secret, and session signing secret. `none` MUST
+reject supplied Basic or Tailscale authorization credentials, and `basic` and
+`tailscale` MUST reject credentials belonging to the other provider.
 
 #### Scenario: Incomplete HTTP Basic configuration fails startup
 - **WHEN** `auth-mode=basic` is configured without a non-empty username or password
 - **THEN** portal exits with a configuration error that identifies the missing authorization setting
 
+#### Scenario: Incomplete Tailscale configuration fails startup
+- **WHEN** `auth-mode=tailscale` is configured without a non-empty OAuth client ID, OAuth client secret, or session signing secret
+- **THEN** portal exits with a configuration error that identifies the missing authorization setting
+
+#### Scenario: Tailscale credentials with disabled authorization fail startup
+- **WHEN** `auth-mode=none` is configured with any Tailscale OAuth or session signing credential
+- **THEN** portal exits with a configuration error that identifies that Tailscale credentials require `auth-mode=tailscale`
+
 #### Scenario: Unsupported authorization mode fails startup
-- **WHEN** an authorization mode other than `none` or `basic` is configured
+- **WHEN** an authorization mode other than `none`, `basic`, or `tailscale` is configured
 - **THEN** portal exits with a configuration error that identifies the unsupported mode
+
+### Requirement: Tailscale Authorization Settings Are Available From All Sources
+portal MUST resolve Tailscale authorization client ID, client secret, and session
+signing secret from CLI flags, `PORTAL_*` environment variables, and
+`~/.portal/config.yml` with the existing deterministic configuration precedence.
+
+#### Scenario: Tailscale authorization is configured from environment
+- **WHEN** `PORTAL_AUTH_MODE=tailscale`, `PORTAL_TAILSCALE_OAUTH_CLIENT_ID`, `PORTAL_TAILSCALE_OAUTH_CLIENT_SECRET`, and `PORTAL_TAILSCALE_SESSION_SECRET` are set with a valid service configuration
+- **THEN** portal starts with Tailscale endpoint authorization enabled
+
+#### Scenario: CLI Tailscale credentials override lower-precedence sources
+- **WHEN** configuration file and environment define Tailscale authorization settings and the user supplies a CLI value for one of those settings
+- **THEN** portal uses the CLI value for that setting
+
+### Requirement: Funnel Login Prerequisites Are Clear
+Portal MUST accept the public hostname and derive the fixed HTTPS callback URL
+when its OAuth App bootstrap is used for `auth-mode=tailscale` with Funnel
+enabled. Portal MUST retain existing startup failures for unavailable HTTPS
+certificates or Funnel setup and MUST NOT report the endpoint as ready after
+such a failure.
+
+#### Scenario: Funnel startup fails before login is available
+- **WHEN** a user runs `portal <port> --funnel` with `auth-mode=tailscale` and Funnel HTTPS certificate prerequisites are not satisfied
+- **THEN** portal reports the HTTPS or Funnel setup failure
+- **AND** Portal does not report a ready authenticated endpoint
 
 ### Requirement: Funnel Allowlist Entries Are Validated At Startup
 portal MUST validate Funnel allowlist entries as IP addresses or CIDR blocks before accepting runtime configuration.
@@ -75,6 +110,39 @@ portal MUST preserve tailnet-default and funnel-opt-in semantics regardless of w
 #### Scenario: Tailnet-private default from config file
 - **WHEN** `~/.portal/config.yml` sets a proxy target port and does not enable funnel
 - **THEN** portal exposes the service to the tailnet only
+
+### Requirement: Command-Aware Configuration Resolution
+Portal MUST apply the existing configuration precedence to serving commands and
+MUST validate only settings relevant to the selected command. OAuth App,
+cleanup, and configuration-management commands MUST NOT require a service port
+or validate a configured proxy target.
+
+#### Scenario: Serve command uses configuration-file port
+- **WHEN** `~/.portal/config.yml` supplies a valid port and a user runs `portal serve` without a positional port
+- **THEN** Portal uses the configured port for serving
+
+#### Scenario: Cleanup command ignores invalid serving configuration
+- **WHEN** `~/.portal/config.yml` contains an invalid serving setting and a user runs `portal cleanup`
+- **THEN** Portal performs cleanup without rejecting the unrelated serving setting
+
+### Requirement: Configuration Template Generation
+Portal MUST provide `portal config init` to generate a commented YAML template
+at `~/.portal/config.yml`. Portal MUST create the parent directory as needed,
+MUST generate a tailnet-private default configuration, and MUST NOT overwrite an
+existing configuration file unless `--force` is provided.
+
+#### Scenario: New configuration template is created
+- **WHEN** a user runs `portal config init` and the default configuration file does not exist
+- **THEN** Portal creates a commented YAML template with Funnel disabled by default
+- **AND** Portal reports the generated file location
+
+#### Scenario: Existing configuration is protected
+- **WHEN** a user runs `portal config init` and the default configuration file already exists without `--force`
+- **THEN** Portal exits with an error and leaves the existing file unchanged
+
+#### Scenario: Explicit replacement is allowed
+- **WHEN** a user runs `portal config init --force`
+- **THEN** Portal replaces the existing configuration file with the template
 
 ### Requirement: TSNet ListenService Configuration Surface
 portal MUST expose tsnet service-mode configuration through CLI flags,
